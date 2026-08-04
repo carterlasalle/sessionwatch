@@ -1,0 +1,23 @@
+[package]
+name = "sessionwatch"
+version = "0.1.0"
+edition = "2021"
+description = "Live TUI that watches connected SSH & local terminal sessions: who's logged in, what they're running, and every process they spawn."
+license = "MIT"
+
+[[bin]]
+name = "sessionwatch"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+
+[profile.dev]
+opt-level = 1

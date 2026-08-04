@@ -1,0 +1,9 @@
+# Cross-compiling from macOS: use Rust's bundled LLD for ELF targets so we
+# don't need a GNU toolchain. See `cargo build --target <musl-target>`.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "link-self-contained=yes"]

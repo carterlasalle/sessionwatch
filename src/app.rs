@@ -1,0 +1,308 @@
+//! Application state, refresh/diffing logic, and the key-driven event loop.
+
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
+
+use crate::collect::Collector;
+use crate::model::{Event, Proc, Snapshot};
+
+pub const MAX_EVENTS: usize = 64;
+const HISTORY_LEN: usize = 42;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Sessions,
+    Processes,
+}
+
+pub struct App {
+    pub collector: Box<dyn Collector>,
+    pub snap: Snapshot,
+    prev: Option<Snapshot>,
+    pub events: VecDeque<Event>,
+    /// per-session activity history (proc count) for sparklines.
+    pub history: Vec<Vec<f64>>,
+    pub selected: usize,
+    pub proc_sel: usize,
+    pub focus: Focus,
+    pub follow: bool,
+    pub interval: Duration,
+    pub last_refresh: Instant,
+    pub phase: u64,
+    pub show_help: bool,
+    pub rows: (u16, u16),
+}
+
+impl App {
+    pub fn new(collector: Box<dyn Collector>, interval: Duration) -> Self {
+        let mut app = App {
+            collector,
+            snap: Snapshot::default(),
+            prev: None,
+            events: VecDeque::new(),
+            history: Vec::new(),
+            selected: 0,
+            proc_sel: 0,
+            focus: Focus::Sessions,
+            follow: true,
+            interval,
+            last_refresh: Instant::now(),
+            phase: 0,
+            show_help: false,
+            rows: (24, 80),
+        };
+        app.refresh();
+        app
+    }
+
+    pub fn refresh(&mut self) {
+        let new_snap = self.collector.collect();
+        self.diff(&new_snap);
+        self.snap = new_snap;
+        self.last_refresh = Instant::now();
+
+        // Per-session activity history (proc count) for sparklines.
+        while self.history.len() < self.snap.sessions.len() {
+            self.history.push(Vec::new());
+        }
+        for (i, hist) in self.history.iter_mut().enumerate() {
+            let n = self
+                .snap
+                .procs
+                .iter()
+                .filter(|p| p.session_idx == Some(i))
+                .count() as f64;
+            hist.push(n);
+            if hist.len() > HISTORY_LEN {
+                let overflow = hist.len() - HISTORY_LEN;
+                hist.drain(0..overflow);
+            }
+        }
+
+        if self.snap.sessions.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = self.selected.min(self.snap.sessions.len() - 1);
+            if self.follow {
+                self.selected = self.most_active();
+            }
+        }
+    }
+
+    fn most_active(&self) -> usize {
+        let mut best = self.selected;
+        let mut best_score = f64::MIN;
+        for (i, hist) in self.history.iter().enumerate() {
+            let recent: f64 = hist.iter().rev().take(6).sum();
+            if recent > best_score {
+                best_score = recent;
+                best = i;
+            }
+        }
+        best
+    }
+
+    /// Emit spawn/exit/login events vs. the previous snapshot.
+    fn diff(&mut self, new: &Snapshot) {
+        let Some(prev) = self.prev.clone() else {
+            // Baseline: seed only the most recent handful so the opening screen
+            // isn't a wall of "spawned" lines.
+            let mut seed: Vec<Event> = new
+                .procs
+                .iter()
+                .map(|p| self.note(new.taken_at, p, format!("spawned `{}`", p.cmdline), "spawn"))
+                .collect();
+            seed.truncate(MAX_EVENTS);
+            self.events = seed.into_iter().collect();
+            self.prev = Some(new.clone());
+            return;
+        };
+
+        let prev_pids: std::collections::HashSet<u32> = prev.procs.iter().map(|p| p.pid).collect();
+        let new_pids: std::collections::HashSet<u32> = new.procs.iter().map(|p| p.pid).collect();
+
+        for p in &new.procs {
+            if !prev_pids.contains(&p.pid) {
+                self.push(self.note(new.taken_at, p, format!("spawned `{}`", p.cmdline), "spawn"));
+            }
+        }
+        for p in &prev.procs {
+            if !new_pids.contains(&p.pid) {
+                self.push(self.note(new.taken_at, p, format!("ended `{}`", p.cmdline), "exit"));
+            }
+        }
+
+        for s in &new.sessions {
+            if !prev.sessions.iter().any(|o| o.line == s.line) {
+                self.push(Event {
+                    at: new.taken_at,
+                    user: s.user.clone(),
+                    session_line: s.line.clone(),
+                    text: format!("logged in on {}", s.line),
+                    kind: "note",
+                });
+            }
+        }
+        for s in &prev.sessions {
+            if !new.sessions.iter().any(|o| o.line == s.line) {
+                self.push(Event {
+                    at: new.taken_at,
+                    user: s.user.clone(),
+                    session_line: s.line.clone(),
+                    text: format!("disconnected from {}", s.line),
+                    kind: "exit",
+                });
+            }
+        }
+
+        self.prev = Some(new.clone());
+    }
+
+    fn note(&self, at: i64, p: &Proc, text: String, kind: &'static str) -> Event {
+        let line = match p.session_idx {
+            Some(i) => self
+                .snap
+                .sessions
+                .get(i)
+                .map(|s| s.line.clone())
+                .unwrap_or_else(|| "?".into()),
+            None => "?".into(),
+        };
+        Event {
+            at,
+            user: p.user.clone(),
+            session_line: line,
+            text,
+            kind,
+        }
+    }
+
+    fn push(&mut self, e: Event) {
+        self.events.push_back(e);
+        while self.events.len() > MAX_EVENTS {
+            self.events.pop_front();
+        }
+    }
+
+    pub fn run(&mut self, terminal: &mut crate::ui::Terminal) -> std::io::Result<()> {
+        loop {
+            terminal.draw(|f| crate::ui::draw(f, self))?;
+            self.phase = self.phase.wrapping_add(1);
+
+            let interval_ms = self.interval.as_millis() as u64;
+            let elapsed = self.last_refresh.elapsed().as_millis() as u64;
+            let until_refresh = interval_ms.saturating_sub(elapsed);
+            let timeout = until_refresh.min(100).max(1);
+
+            if crossterm::event::poll(Duration::from_millis(timeout))? {
+                match crossterm::event::read()? {
+                    TermEvent::Key(k) => self.handle_key(k)?,
+                    TermEvent::Resize(w, h) => {
+                        self.rows = (h, w);
+                    }
+                    _ => {}
+                }
+            }
+
+            if self.last_refresh.elapsed() >= self.interval {
+                self.refresh();
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
+        if self.show_help {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::Enter => {
+                    self.show_help = false;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => Err(quit_err()),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Err(quit_err()),
+            KeyCode::Char('?') | KeyCode::Char('h') | KeyCode::Char('H') => {
+                self.show_help = true;
+                Ok(())
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.focus = match self.focus {
+                    Focus::Sessions => Focus::Processes,
+                    Focus::Processes => Focus::Sessions,
+                };
+                Ok(())
+            }
+            KeyCode::Left => {
+                self.focus = Focus::Sessions;
+                Ok(())
+            }
+            KeyCode::Right => {
+                self.focus = Focus::Processes;
+                Ok(())
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                match self.focus {
+                    Focus::Sessions => {
+                        if !self.snap.sessions.is_empty() {
+                            self.selected = (self.selected + 1) % self.snap.sessions.len();
+                        }
+                    }
+                    Focus::Processes => {
+                        let n = self.session_proc_len().saturating_sub(1);
+                        self.proc_sel = self.proc_sel.saturating_add(1).min(n);
+                    }
+                }
+                Ok(())
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                match self.focus {
+                    Focus::Sessions => {
+                        if !self.snap.sessions.is_empty() {
+                            self.selected = (self.selected + self.snap.sessions.len() - 1)
+                                % self.snap.sessions.len();
+                        }
+                    }
+                    Focus::Processes => {
+                        self.proc_sel = self.proc_sel.saturating_sub(1);
+                    }
+                }
+                Ok(())
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                self.follow = !self.follow;
+                Ok(())
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                self.interval = Duration::from_millis(
+                    (self.interval.as_millis() as u64 + 500).min(30_000),
+                );
+                Ok(())
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                self.interval = self
+                    .interval
+                    .saturating_sub(Duration::from_millis(500))
+                    .max(Duration::from_millis(250));
+                Ok(())
+            }
+            KeyCode::Char(' ') | KeyCode::Char('r') => {
+                self.refresh();
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn session_proc_len(&self) -> usize {
+        self.snap.procs.iter().filter(|p| p.session_idx == Some(self.selected)).count()
+    }
+}
+
+fn quit_err() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, "quit")
+}
