@@ -73,6 +73,20 @@ do not exist on macOS. The binary builds fine on a Mac (e.g. to cross-compile
 a Linux binary with `cargo build --target x86_64-unknown-linux-musl`) but
 refuses to start there. Run it on a Linux box (or an Ubuntu VM/container).
 
+## Updating
+
+```bash
+cargo install --git https://github.com/carterlasalle/sessionwatch.git --force
+```
+
+`--force` is required because the crate version doesn't change between
+releases — cargo install would otherwise skip an already-installed binary.
+The new build lands in `~/.cargo/bin/sessionwatch` in place, so just:
+
+1. quit any running instance (`q` or Ctrl-C),
+2. run the update command above,
+3. start it again (`sudo $(which sessionwatch)` for full visibility).
+
 ## Usage
 
 ```
