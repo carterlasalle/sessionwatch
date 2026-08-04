@@ -1,6 +1,10 @@
 //! Shared data model for sessions, processes, and activity events.
 
 /// The kind of terminal session.
+#[cfg_attr(
+    not(any(test, target_os = "linux")),
+    allow(dead_code) // constructed by the Linux collector / test fixture only
+)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SessionKind {
     Ssh,
@@ -30,6 +34,8 @@ pub struct Session {
     pub device: String,
     /// remote host, or "console"/"localhost" for local sessions.
     pub host: String,
+    /// human session name when meaningful: tmux/zellij/screen session name.
+    pub name: Option<String>,
     pub kind: SessionKind,
     /// session start (unix seconds).
     pub login_unix: i64,

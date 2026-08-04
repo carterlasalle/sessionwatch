@@ -24,6 +24,8 @@ pub struct App {
     pub events: VecDeque<Event>,
     /// per-session activity history (proc count) for sparklines.
     pub history: Vec<Vec<f64>>,
+    /// unix time of the last observed event per session — drives FOLLOW.
+    pub last_activity: Vec<i64>,
     pub selected: usize,
     pub proc_sel: usize,
     pub focus: Focus,
@@ -43,10 +45,11 @@ impl App {
             prev: None,
             events: VecDeque::new(),
             history: Vec::new(),
+            last_activity: Vec::new(),
             selected: 0,
             proc_sel: 0,
             focus: Focus::Sessions,
-            follow: true,
+            follow: false,
             interval,
             last_refresh: Instant::now(),
             phase: 0,
@@ -80,6 +83,10 @@ impl App {
                 hist.drain(0..overflow);
             }
         }
+        // Baseline activity so FOLLOW doesn't treat the first frame specially.
+        while self.last_activity.len() < self.snap.sessions.len() {
+            self.last_activity.push(self.snap.taken_at);
+        }
 
         if self.snap.sessions.is_empty() {
             self.selected = 0;
@@ -88,16 +95,20 @@ impl App {
             if self.follow {
                 self.selected = self.most_active();
             }
+            self.proc_sel = self
+                .proc_sel
+                .min(self.session_proc_len().saturating_sub(1));
         }
     }
 
+    /// Session with the most recent activity event; keeps the current
+    /// selection on ties so FOLLOW never yanks the cursor around idly.
     fn most_active(&self) -> usize {
         let mut best = self.selected;
-        let mut best_score = f64::MIN;
-        for (i, hist) in self.history.iter().enumerate() {
-            let recent: f64 = hist.iter().rev().take(6).sum();
-            if recent > best_score {
-                best_score = recent;
+        let mut best_at = self.last_activity.get(self.selected).copied().unwrap_or(0);
+        for (i, at) in self.last_activity.iter().enumerate() {
+            if *at > best_at {
+                best_at = *at;
                 best = i;
             }
         }
@@ -126,11 +137,17 @@ impl App {
         for p in &new.procs {
             if !prev_pids.contains(&p.pid) {
                 self.push(self.note(new.taken_at, p, format!("spawned `{}`", p.cmdline), "spawn"));
+                if let Some(i) = p.session_idx {
+                    self.mark_active(i, new.taken_at);
+                }
             }
         }
         for p in &prev.procs {
             if !new_pids.contains(&p.pid) {
                 self.push(self.note(new.taken_at, p, format!("ended `{}`", p.cmdline), "exit"));
+                if let Some(i) = p.session_idx {
+                    self.mark_active(i, new.taken_at);
+                }
             }
         }
 
@@ -143,6 +160,9 @@ impl App {
                     text: format!("logged in on {}", s.line),
                     kind: "note",
                 });
+                if let Some(i) = new.sessions.iter().position(|o| o.line == s.line) {
+                    self.mark_active(i, new.taken_at);
+                }
             }
         }
         for s in &prev.sessions {
@@ -184,6 +204,13 @@ impl App {
         while self.events.len() > MAX_EVENTS {
             self.events.pop_front();
         }
+    }
+
+    fn mark_active(&mut self, session: usize, at: i64) {
+        if self.last_activity.len() <= session {
+            self.last_activity.resize(session + 1, at);
+        }
+        self.last_activity[session] = at;
     }
 
     pub fn run(&mut self, terminal: &mut crate::ui::Terminal) -> std::io::Result<()> {
@@ -250,6 +277,8 @@ impl App {
                     Focus::Sessions => {
                         if !self.snap.sessions.is_empty() {
                             self.selected = (self.selected + 1) % self.snap.sessions.len();
+                            self.follow = false; // manual choice wins
+                            self.proc_sel = 0;
                         }
                     }
                     Focus::Processes => {
@@ -265,6 +294,8 @@ impl App {
                         if !self.snap.sessions.is_empty() {
                             self.selected = (self.selected + self.snap.sessions.len() - 1)
                                 % self.snap.sessions.len();
+                            self.follow = false;
+                            self.proc_sel = 0;
                         }
                     }
                     Focus::Processes => {

@@ -129,7 +129,7 @@ fn two_col(left: Line<'static>, right: Line<'static>) -> Line<'static> {
 fn draw_body(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
     draw_sessions(f, chunks[0], app);
     draw_processes(f, chunks[1], app);
@@ -156,11 +156,22 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(&s.user, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::styled("@", Style::default().fg(DIM)),
             Span::styled(&s.host, Style::default().fg(Color::Gray)),
-            Span::raw("  "),
+            Span::raw(" "),
             Span::styled(format!("[{}]", s.kind.label()), Style::default().fg(kind_color(s.kind)).add_modifier(Modifier::BOLD)),
-            Span::styled("  ", Style::default()),
-            Span::styled(sp, Style::default().fg(if selected { kind_color(s.kind) } else { Color::DarkGray })),
         ]);
+
+        // session name chip (tmux/screen/zellij session names)
+        let mut name_line = head;
+        if let Some(name) = &s.name {
+            let nstyle = if selected {
+                kind_color(s.kind)
+            } else {
+                Color::DarkGray
+            };
+            name_line.spans.splice(7..7, vec![
+                Span::styled(format!("«{}»", name), Style::default().fg(nstyle).add_modifier(Modifier::BOLD | Modifier::ITALIC)),
+            ]);
+        }
 
         let detail = Line::from(vec![
             Span::styled("   ", Style::default()),
@@ -171,9 +182,11 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("{} proc", nprocs), Style::default().fg(if selected { GOOD } else { Color::Gray })),
             Span::styled(" · pid ", Style::default().fg(DIM)),
             Span::styled(s.pid.to_string(), Style::default().fg(DIM)),
+            Span::styled("  ", Style::default()),
+            Span::styled(sp, Style::default().fg(if selected { kind_color(s.kind) } else { Color::DarkGray })),
         ]);
 
-        items.push(ListItem::new(vec![head, detail]));
+        items.push(ListItem::new(vec![name_line, detail]));
     }
     if items.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled("no login sessions", Style::default().fg(DIM)))));
@@ -191,7 +204,14 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
 fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Processes;
     let header_text = match app.snap.sessions.get(app.selected) {
-        Some(s) => format!("  {}@{}  {}  ", s.user, s.host, s.line),
+        Some(s) => {
+            let name = s
+                .name
+                .as_ref()
+                .map(|n| format!(" «{n}»"))
+                .unwrap_or_default();
+            format!("  {}@{}{}  {}  ", s.user, s.host, name, s.line)
+        }
         None => "  no session selected  ".to_string(),
     };
     let block = Block::default()
@@ -257,13 +277,13 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
     state.select(Some(app.proc_sel.min(procs.len().saturating_sub(1))));
 
     let table = Table::new(rows, [
-        Constraint::Length(9),
+        Constraint::Length(7),
         Constraint::Length(10),
+        Constraint::Length(6),
         Constraint::Length(7),
         Constraint::Length(8),
-        Constraint::Length(9),
         Constraint::Length(2),
-        Constraint::Min(10),
+        Constraint::Min(12),
     ])
     .header(header)
     .block(block)
@@ -345,7 +365,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let rows = [
         ("↑/↓ / j/k", "move selection (in focused panel)"),
         ("← / → / Tab", "switch between sessions and processes"),
-        ("f", "toggle FOLLOW — auto-pin the busiest session"),
+        ("f", "toggle FOLLOW — auto-follow the most recently active session"),
         ("space / r", "refresh snapshot immediately"),
         ("+ / -", "speed up / slow down auto-refresh"),
         ("h / ?", "this help"),
@@ -473,7 +493,7 @@ mod tests {
     /// Render one full frame to a text buffer and dump it to
     /// `target/ui-snapshot.txt` for eyeballing.
     fn render_frame(w: u16, h: u16) -> String {
-        let mut app = App::new(collect::new(true), Duration::from_millis(250));
+        let mut app = App::new(collect::test_collector(), Duration::from_millis(250));
         for _ in 0..5 {
             app.refresh();
         }
@@ -500,34 +520,29 @@ mod tests {
         assert!(text.contains("SESSIONS"), "sessions panel missing");
         assert!(text.contains("PROCESSES"), "processes panel missing");
         assert!(text.contains("LIVE ACTIVITY"), "ticker missing");
-        // demo sessions present
-        for name in ["alice", "bob", "carol", "dev", "ops"] {
+        // sessions present
+        for name in ["jackphelps", "alice", "carol", "dev", "ops"] {
             assert!(text.contains(name), "session {name} missing");
         }
-        // session kind badges
+        // session kind badges + named tmux/screen sessions
         assert!(text.contains("[SSH]"), "ssh badge missing");
         assert!(text.contains("[TMUX]"), "tmux badge missing");
         assert!(text.contains("[SCREEN]"), "screen badge missing");
+        assert!(text.contains("cursor-env"), "tmux session name missing");
+        assert!(text.contains("deploy-prod"), "screen session name missing");
         // process table headers
         assert!(text.contains("PID"), "PID column missing");
         assert!(text.contains("CPU%"), "CPU column missing");
         assert!(text.contains("COMMAND"), "command column missing");
-        // processes visible: guaranteed shells plus random demo commands
-        assert!(
-            text.contains("bash") || text.contains("zsh"),
-            "no shell process visible"
-        );
-        assert!(
-            text.contains("git ") || text.contains("vim ") || text.contains("npm") || text.contains("cargo"),
-            "no demo commands visible"
-        );
+        // processes visible from the fixture
+        assert!(text.contains("vim src/main.rs"), "process row missing");
         // status bar hints
         assert!(text.contains("q quit"), "status hints missing");
     }
 
     #[test]
     fn help_overlay_renders() {
-        let mut app = App::new(collect::new(true), Duration::from_millis(250));
+        let mut app = App::new(collect::test_collector(), Duration::from_millis(250));
         app.refresh();
         app.show_help = true;
         let backend = TestBackend::new(90, 24);

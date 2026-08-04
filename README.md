@@ -1,36 +1,46 @@
 # sessionwatch
 
 A live TUI for watching what connected SSH and local terminal sessions are
-doing: who is logged in, what they are running right now, and every process
-they spawn or kill — as it happens.
+doing: who is logged in (with their real usernames and tmux/screen session
+names), what they are running right now, and every process they spawn or kill
+— as it happens.
 
 ```
-◉ SESSIONWATCH live terminal session monitor [demo]boot 1d 0h 0m  13:44:37  08-04
-sessions:5  procs:18  orphans:0  load 0.60 1.30 0.80  0.2s FOLLOW ON  │ 2ssh 1local 2tmux/screen
-┌ SESSIONS ─────────────────────────┐┌ PROCESSES   bob@localhost  pts/1  ────────────────┐
-│● alice@10.20.30.5  [SSH]  ████▆▆▆▅││PID       USER       CPU%    RSS      ELAPSED  S  COMMAND
-│   /dev/pts/0 · up 10m 0s · 5 proc ││▸1011     bob        12.8   19M        6s    S  zsh
-│○ bob@localhost  [LOCAL]  ████▇▇▇▇▇││ 1012     bob        12.1   6M         6s    S  cargo build --release
-│   /dev/pts/1 · up 25m 0s · 4 proc ││ 1013     bob        11.3   25M        6s    S  docker compose up -d
-└───────────────────────────────────┘└────────────────────────────────────────────────────┘
-┌ LIVE ACTIVITY ─────────────────────────────────────────────────────────┐
-│[SPAWN] alice@pts/0  spawned `screen -ls`   (0s ago)                    │
-└────────────────────────────────────────────────────────────────────────┘
+◉ SESSIONWATCH live terminal session monitor [live:/proc]boot 1d 0h 0m  14:14:02  08-04
+sessions:5  procs:12  orphans:0  load 0.40 0.70 0.60  0.2s FOLLOW OFF  │ 2ssh 1local 2tmux/screen
+┌ SESSIONS ────────────────────────────────┐┌ PROCESSES   jackphelps@10.20.30.5  pts/0  ────────────────────┐
+│● jackphelps@10.20.30.5 [SSH]             ││PID     USER       CPU%   RSS     ELAPSED  S  COMMAND          │
+│   /dev/pts/0 · up 10m 0s · 3 proc · 900  ││▸1003   jackphelps   3.0  12M        0s    S  git status       │
+│○ alice@localhost [LOCAL]                 ││ 1001   jackphelps  22.5  12M        2s    S  vim src/main.rs  │
+│   /dev/pts/1 · up 25m 0s · 2 proc · 901  ││ 1002   jackphelps   0.4  12M        8m20s S  bash             │
+│○ carol@172.16.8.12 [SSH]                 ││                                                              │
+│   /dev/pts/2 · up 40m 0s · 2 proc · 902  ││                                                              │
+│○ dev@localhost [TMUX]«cursor-env»        ││                                                              │
+│   /dev/pts/3 · up 55m 0s · 3 proc · 903  ││                                                              │
+│○ ops@localhost [SCREEN]«deploy-prod»     ││                                                              │
+│   /dev/pts/4 · up 1h 10m · 2 proc · 904  ││                                                              │
+└──────────────────────────────────────────┘└──────────────────────────────────────────────────────────────┘
+┌ LIVE ACTIVITY ─────────────────────────────────────────────────────────────────────────────────────────────┐
+│[SPAWN] ops@pts/4  spawned `screen`   (0s ago)                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  sessionwatch   ↑↓ select session  •  → processes  •  f follow  •  +/- speed  •  h help  •  q quit
 ```
 
 ## Features
 
 - **Session radar** — every logged-in terminal from utmpx, tagged
-  `[SSH]` / `[LOCAL]` / `[TMUX]` / `[SCREEN]`, with login time, live process
-  count, and a per-session activity sparkline
+  `[SSH]` / `[LOCAL]` / `[TMUX]` / `[SCREEN]`, with real usernames, login time,
+  live process count, and a per-session activity sparkline
+- **Session names** — tmux/zellij/screen session names are extracted from the
+  multiplexer's argv (`tmux attach -t cursor-env` → `«cursor-env»`) and shown
+  right on the card
 - **Live process table** — everything running on the selected tty: PID, user,
   CPU%, RSS, elapsed time, state; `▸` marks the newest command the user just
   launched (newest-first so you see what they did last)
 - **Activity ticker** — a scrolling feed of every process they spawn and kill,
   plus logins/logouts, in real time
-- **Follow mode** — auto-pins the busiest session (toggle with `f`)
-- **Demo mode** — synthetic data so the UI runs anywhere, no permissions needed
+- **Follow mode** — press `f` to auto-follow the most recently active session;
+  your own navigation always wins and turns follow off
 
 ## Install
 
@@ -58,21 +68,15 @@ cd sessionwatch && cargo build --release
 
 ### macOS
 
-```bash
-brew install rust
-cargo install --git https://github.com/carterlasalle/sessionwatch.git
-sessionwatch --demo
-```
-
-> ⚠️ The live data path is Linux-only (`/proc` + utmpx). On macOS the tool
-> automatically runs in **demo mode** with synthetic sessions — the full UI,
-> but no real session watching.
+sessionwatch is **Linux-only**: it watches `/proc` and `/var/run/utmp`, which
+do not exist on macOS. The binary builds fine on a Mac (e.g. to cross-compile
+a Linux binary with `cargo build --target x86_64-unknown-linux-musl`) but
+refuses to start there. Run it on a Linux box (or an Ubuntu VM/container).
 
 ## Usage
 
 ```
-sessionwatch                 live mode (Linux; run as root for all users' visibility)
-sessionwatch --demo          synthetic data, no permissions needed
+sessionwatch                 watch live sessions (run as root for full visibility)
 sessionwatch -i 2            refresh every 2 seconds
 sessionwatch --help          full option and key reference
 ```
@@ -81,7 +85,7 @@ sessionwatch --help          full option and key reference
 |--------------|-----------------------------------------|
 | `↑` / `↓` / `j` / `k` | move selection (in the focused panel) |
 | `←` / `→` / `Tab` | switch between sessions and processes |
-| `f`          | toggle FOLLOW — auto-pin the busiest session |
+| `f`          | toggle FOLLOW — auto-follow the most recently active session |
 | `space` / `r` | refresh snapshot immediately         |
 | `+` / `-`    | speed up / slow down auto-refresh       |
 | `h` / `?`    | help overlay                            |
@@ -95,6 +99,8 @@ sessionwatch --help          full option and key reference
   encoding and matched against each session's terminal device, so every process
   is attributed to the tty (and user) running it. CPU% is computed from
   utime/stime deltas between polls.
+- **Session names**: tmux/zellij/screen session names are parsed from the
+  client processes' argv on each tty (`-s`/`-t`/`-S` flags, `zellij attach <n>`).
 - **Events**: each refresh diffs the process set and emits spawn/exit events.
 
 ## Permissions

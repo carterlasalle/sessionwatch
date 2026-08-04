@@ -126,6 +126,17 @@ impl Collector for LinuxCollector {
 
         assign_kinds(&mut sessions, &procs);
 
+        // Human session names from tmux/screen/zellij argv on each tty.
+        for (i, s) in sessions.iter_mut().enumerate() {
+            if s.name.is_none() {
+                let cmdlines = procs
+                    .iter()
+                    .filter(|p| p.session_idx == Some(i))
+                    .map(|p| p.cmdline.as_str());
+                s.name = super::session_name_from_cmdlines(cmdlines);
+            }
+        }
+
         self.prev_ticks = cur_ticks;
         self.prev_at = Some(now);
 

@@ -28,12 +28,14 @@ USAGE:
 
 OPTIONS:
     -i, --interval <SECS>   refresh interval in seconds [default: 1.0]
-    -d, --demo              use synthetic demo data (incl. on Linux)
     -h, --help              show this help
+
+REQUIRES LINUX: sessionwatch reads /proc and /var/run/utmp to observe
+sessions, so it will not start on macOS or other Unixes.
 
 KEYS (inside the TUI):
     ↑/↓ j/k   move selection        ←/→/Tab  switch panel
-    f         toggle FOLLOW (pin busiest session)
+    f         toggle FOLLOW (auto-follow the most recently active session)
     + / -     speed up / slow down refresh
     space/r   refresh now           h/?  help
     q / Ctrl-C  quit
@@ -42,7 +44,6 @@ KEYS (inside the TUI):
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut interval = 1.0f64;
-    let mut demo = false;
 
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -55,7 +56,6 @@ fn main() -> io::Result<()> {
                 let v = it.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "-i needs a value"))?;
                 interval = v.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad interval"))?;
             }
-            "--demo" | "-d" => demo = true,
             other => {
                 eprintln!("unknown argument: {other}\n\n{USAGE}");
                 std::process::exit(2);
@@ -64,6 +64,9 @@ fn main() -> io::Result<()> {
     }
 
     let interval = Duration::from_secs_f64(interval.max(0.25));
+
+    // The collector requires Linux; fail loudly before touching the terminal.
+    let collector = collect::new().map_err(|msg| io::Error::new(io::ErrorKind::Unsupported, msg))?;
 
     // Raw-mode / alternate-screen terminal setup, restored on panic too.
     enable_raw_mode()?;
@@ -78,7 +81,6 @@ fn main() -> io::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ui::Terminal::new(backend)?;
 
-    let collector = collect::new(demo);
     let mut app = App::new(collector, interval);
 
     let result = app.run(&mut terminal);

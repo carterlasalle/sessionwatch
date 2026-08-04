@@ -52,6 +52,7 @@ pub fn parse_utmp(bytes: &[u8]) -> Vec<Session> {
             line,
             device,
             host,
+            name: None,
             kind: SessionKind::Local, // refined later from observed processes
             login_unix: tv_sec,
             pid,
