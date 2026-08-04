@@ -76,14 +76,17 @@ pub struct Event {
     pub kind: &'static str,
 }
 
-/// A past (or still-open) terminal connection, reconstructed from wtmp.
+/// A past (or still-open) terminal connection, reconstructed from wtmp
+/// (and enriched by sessionwatch's own journal).
 #[derive(Clone, Debug)]
 pub struct Connection {
     pub user: String,
     /// terminal line, e.g. `pts/3` or `tty1`.
     pub line: String,
-    /// remote host, or "localhost" for local sessions.
+    /// remote host, Tailscale-resolved when possible; "localhost" for local.
     pub host: String,
+    /// tmux/zellij/screen session name observed while it was live.
+    pub name: Option<String>,
     pub kind: SessionKind,
     pub pid: u32,
     pub login_unix: i64,
@@ -97,6 +100,16 @@ impl Connection {
     }
 }
 
+/// A failed login attempt (from btmp) — part of the real history of who
+/// has been trying to reach the box.
+#[derive(Clone, Debug)]
+pub struct FailedLogin {
+    pub user: String,
+    pub host: String,
+    pub line: String,
+    pub at: i64,
+}
+
 /// One full observation of the system.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
@@ -107,6 +120,8 @@ pub struct Snapshot {
     pub orphans: Vec<Proc>,
     /// every previous connection reconstructed from wtmp (newest by login).
     pub connections: Vec<Connection>,
+    /// failed login attempts from btmp.
+    pub failed: Vec<FailedLogin>,
     pub load: [f64; 3],
     pub boot_unix: i64,
     pub taken_at: i64,

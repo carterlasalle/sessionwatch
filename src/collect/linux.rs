@@ -8,8 +8,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::model::{Connection, Proc, Session, SessionKind, Snapshot};
+use crate::model::{FailedLogin, Proc, Session, SessionKind, Snapshot};
 
+use super::btmp::BtmpReader;
+use super::journal::{merge_connections, Journal};
+use super::tailscale::TailscaleMap;
 use super::utmp;
 use super::wtmp::WtmpReader;
 use super::Collector;
@@ -23,6 +26,10 @@ pub struct LinuxCollector {
     prev_at: Option<Instant>,
     users: HashMap<u32, String>,
     wtmp: WtmpReader,
+    btmp: BtmpReader,
+    tailscale: TailscaleMap,
+    journal: Journal,
+    prev_sessions: Vec<Session>,
 }
 
 impl LinuxCollector {
@@ -35,6 +42,10 @@ impl LinuxCollector {
             prev_at: None,
             users: HashMap::new(),
             wtmp: WtmpReader::new(),
+            btmp: BtmpReader::new(),
+            tailscale: TailscaleMap::new(),
+            journal: Journal::new(),
+            prev_sessions: Vec::new(),
         }
     }
 }
@@ -138,18 +149,35 @@ impl Collector for LinuxCollector {
                     .map(|p| p.cmdline.as_str());
                 s.name = super::session_name_from_cmdlines(cmdlines);
             }
+            // Tailscale: turn CGNAT addresses into real tailnet machine names.
+            s.host = self.tailscale.resolve(&s.host);
         }
+
+        // Journal: persist what we observe live so history is richer later.
+        self.journal.observe(&self.prev_sessions, &sessions);
+        self.prev_sessions = sessions.clone();
 
         self.prev_ticks = cur_ticks;
         self.prev_at = Some(now);
 
-        let connections: Vec<Connection> = self.wtmp.refresh();
+        let mut connections = merge_connections(
+            self.wtmp.refresh(),
+            [self.journal.loaded(), self.journal.observed()].concat(),
+        );
+        for c in connections.iter_mut() {
+            c.host = self.tailscale.resolve(&c.host);
+        }
+        let mut failed: Vec<FailedLogin> = self.btmp.refresh();
+        for f in failed.iter_mut() {
+            f.host = self.tailscale.resolve(&f.host);
+        }
 
         Snapshot {
             sessions,
             procs,
             orphans,
             connections,
+            failed,
             load,
             boot_unix,
             taken_at: now_unix,

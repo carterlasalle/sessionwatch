@@ -3,7 +3,11 @@
 //! On Linux we read `/proc` + utmpx directly. Non-Linux hosts cannot run the
 //! live collector, so the binary refuses to start there (see `new()`).
 
+pub mod btmp;
+pub mod incremental;
+pub mod journal;
 pub mod linux;
+pub mod tailscale;
 pub mod utmp;
 pub mod wtmp;
 
@@ -11,7 +15,7 @@ pub mod wtmp;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
-use crate::model::{Connection, Proc, Session, SessionKind};
+use crate::model::{Connection, FailedLogin, Proc, Session, SessionKind};
 use crate::model::Snapshot;
 
 /// Produces a [`Snapshot`] on demand. Implementations keep whatever state they
@@ -164,6 +168,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                     user: "jackphelps".into(),
                     line: "pts/0".into(),
                     host: "10.20.30.5".into(),
+                    name: None,
                     kind: SessionKind::Ssh,
                     pid: 900,
                     login_unix: now - 3600,
@@ -173,15 +178,27 @@ pub fn test_collector() -> Box<dyn Collector> {
                     user: "alice".into(),
                     line: "pts/1".into(),
                     host: "localhost".into(),
+                    name: None,
                     kind: SessionKind::Local,
                     pid: 901,
                     login_unix: now - 7200,
                     logout_unix: Some(now - 3600),
                 },
                 Connection {
+                    user: "dev".into(),
+                    line: "pts/3".into(),
+                    host: "jackphelps-mbp".into(), // tailscale-resolved
+                    name: Some("cursor-env".into()),
+                    kind: SessionKind::Ssh,
+                    pid: 904,
+                    login_unix: now - 20_000,
+                    logout_unix: Some(now - 15_000),
+                },
+                Connection {
                     user: "carol".into(),
                     line: "pts/2".into(),
                     host: "172.16.8.12".into(),
+                    name: None,
                     kind: SessionKind::Ssh,
                     pid: 902,
                     login_unix: now - 5400,
@@ -190,11 +207,26 @@ pub fn test_collector() -> Box<dyn Collector> {
                 Connection {
                     user: "jackphelps".into(),
                     line: "pts/0".into(),
-                    host: "10.20.30.5".into(),
+                    host: "100.64.0.5".into(), // raw CGNAT, tailscale-unresolved in fixture
+                    name: None,
                     kind: SessionKind::Ssh,
                     pid: 903,
                     login_unix: now - 300,
                     logout_unix: None,
+                },
+            ];
+            let failed = vec![
+                FailedLogin {
+                    user: "root".into(),
+                    host: "203.0.113.7".into(),
+                    line: "ssh:notty".into(),
+                    at: now - 500,
+                },
+                FailedLogin {
+                    user: "root".into(),
+                    host: "100.64.0.9".into(),
+                    line: "ssh:notty".into(),
+                    at: now - 1200,
                 },
             ];
             Snapshot {
@@ -202,6 +234,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                 procs,
                 orphans: Vec::new(),
                 connections,
+                failed,
                 load: [0.4, 0.7, 0.6],
                 boot_unix: now - 86_400,
                 taken_at: now,

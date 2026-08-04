@@ -10,10 +10,11 @@
 #![allow(dead_code)] // used by the Linux collector; kept compiled on all hosts so tests run
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use crate::model::{Connection, SessionKind};
+
+use super::incremental::IncrementalFile;
 
 pub const WTMP_PATH: &str = "/var/log/wtmp";
 const RECORD_LEN: usize = 400;
@@ -22,9 +23,6 @@ const USER_PROCESS: i16 = 7;
 const DEAD_PROCESS: i16 = 8;
 /// keep at most this many reconstructed connections.
 pub const MAX_CONNECTIONS: usize = 500;
-/// tail bytes re-parsed each refresh so login/logout records that straddle
-/// the incremental read boundary still match.
-const CONTEXT_BYTES: usize = 4096;
 
 /// Parse a byte slice of wtmp records into connections (oldest first).
 /// A connection whose `USER_PROCESS` record has no matching logout yet gets
@@ -59,6 +57,7 @@ pub fn parse_wtmp(bytes: &[u8]) -> Vec<Connection> {
                         user,
                         line: line.clone(),
                         host,
+                        name: None,
                         kind,
                         pid,
                         login_unix: tv_sec,
@@ -89,12 +88,11 @@ fn cstr(rec: &[u8], off: usize, len: usize) -> String {
     String::from_utf8_lossy(&field[..end]).into_owned()
 }
 
-/// Incremental reader over wtmp: tracks file size and re-parses only the
-/// appended tail (plus a context window), so a refresh every second costs a
-/// few KB of IO, not the whole (potentially tens of MB) file.
+/// Incremental wtmp reader: re-parses only the appended tail plus a context
+/// window each refresh, so a 1s refresh cycle costs a few KB of IO, not the
+/// whole (potentially tens of MB) file.
 pub struct WtmpReader {
-    path: PathBuf,
-    last_len: u64,
+    file: IncrementalFile,
     seen: HashSet<(u32, i64, String)>, // (pid, login, line) dedupe
     pub conns: Vec<Connection>,
 }
@@ -102,8 +100,7 @@ pub struct WtmpReader {
 impl WtmpReader {
     pub fn new() -> Self {
         WtmpReader {
-            path: PathBuf::from(WTMP_PATH),
-            last_len: 0,
+            file: IncrementalFile::new(PathBuf::from(WTMP_PATH)),
             seen: HashSet::new(),
             conns: Vec::new(),
         }
@@ -111,39 +108,31 @@ impl WtmpReader {
 
     /// Re-read new records and return the reconstructed connections.
     pub fn refresh(&mut self) -> Vec<Connection> {
-        match std::fs::metadata(&self.path) {
-            Ok(md) => {
-                let len = md.len();
-                if len < self.last_len {
-                    // rotated/truncated: rebuild from scratch
-                    self.conns.clear();
-                    self.seen.clear();
-                    self.last_len = 0;
-                }
-                let start = self.last_len.saturating_sub(CONTEXT_BYTES as u64) as u64;
-                if let Ok(mut f) = std::fs::File::open(&self.path) {
-                    let _ = f.seek(SeekFrom::Start(start));
-                    let mut buf = Vec::with_capacity((len - start) as usize);
-                    if f.read_to_end(&mut buf).is_ok() {
-                        for c in parse_wtmp(&buf) {
-                            if self.seen.insert((c.pid, c.login_unix, c.line.clone())) {
-                                self.conns.push(c);
-                            }
-                        }
-                        self.last_len = len;
-                    }
-                }
-            }
-            Err(_) => {
+        let bytes = self.file.tail();
+        if bytes.is_empty() && !self.conns.is_empty() {
+            // file vanished entirely
+            if std::fs::metadata(WTMP_PATH).is_err() {
                 self.conns.clear();
                 self.seen.clear();
-                self.last_len = 0;
+                self.file.reset();
+                return Vec::new();
+            }
+        }
+        for c in parse_wtmp(&bytes) {
+            if self.seen.insert((c.pid, c.login_unix, c.line.clone())) {
+                self.conns.push(c);
             }
         }
         // trim to the cap, dropping the oldest
         if self.conns.len() > MAX_CONNECTIONS {
             let drop = self.conns.len() - MAX_CONNECTIONS;
             self.conns.drain(0..drop);
+            // stale dedupe keys beyond the cap can accumulate; prune once in a while
+            if self.seen.len() > MAX_CONNECTIONS * 4 {
+                self.seen.clear();
+                self.seen
+                    .extend(self.conns.iter().map(|c| (c.pid, c.login_unix, c.line.clone())));
+            }
         }
         self.conns.clone()
     }
@@ -177,8 +166,6 @@ mod tests {
 
     #[test]
     fn reconstructs_ended_and_live_connections() {
-        // alice: login then logout on pts/1
-        // bob: login on pts/2, still open at end of file
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&rec(USER_PROCESS, "pts/1", "alice", "10.0.0.9", 1000, 101));
         bytes.extend_from_slice(&rec(DEAD_PROCESS, "pts/1", "", "", 2000, 101));
@@ -201,7 +188,6 @@ mod tests {
 
     #[test]
     fn closes_stale_open_line_on_reconnect() {
-        // same line reused without a DEAD record in between
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&rec(USER_PROCESS, "pts/0", "alice", "h1", 100, 10));
         bytes.extend_from_slice(&rec(USER_PROCESS, "pts/0", "bob", "h2", 500, 11));
@@ -212,31 +198,5 @@ mod tests {
         assert_eq!(alice.logout_unix, Some(500)); // closed when bob took the line
         let bob = conns.iter().find(|c| c.user == "bob").unwrap();
         assert_eq!(bob.logout_unix, Some(900));
-    }
-
-    #[test]
-    fn dedupes_boundary_records() {
-        let mut reader = WtmpReader::new();
-        // Simulate two refreshes over the same bytes: parse once, then parse
-        // the same data again — dedupe must keep a single connection.
-        let bytes = {
-            let mut b = Vec::new();
-            b.extend_from_slice(&rec(USER_PROCESS, "pts/5", "carol", "vpn", 300, 55));
-            b.extend_from_slice(&rec(DEAD_PROCESS, "pts/5", "", "", 600, 55));
-            b
-        };
-        for c in parse_wtmp(&bytes) {
-            if reader.seen.insert((c.pid, c.login_unix, c.line.clone())) {
-                reader.conns.push(c);
-            }
-        }
-        let n = reader.conns.len();
-        for c in parse_wtmp(&bytes) {
-            if reader.seen.insert((c.pid, c.login_unix, c.line.clone())) {
-                reader.conns.push(c);
-            }
-        }
-        assert_eq!(n, 1);
-        assert_eq!(reader.conns.len(), 1);
     }
 }

@@ -13,7 +13,7 @@ use ratatui::widgets::{
 use ratatui::Frame;
 
 use crate::app::{App, Focus, View};
-use crate::model::{Connection, Proc, SessionKind};
+use crate::model::{Connection, FailedLogin, Proc, SessionKind};
 
 pub type Terminal = ratatui::Terminal<CrosstermBackend<Stdout>>;
 
@@ -295,88 +295,116 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
-/// Reconstructed previous connections (from wtmp): who, from where, when,
-/// and for how long — with still-open ones marked live.
+/// Reconstructed history: every previous connection (from wtmp + sessionwatch's
+/// journal, with Tailscale-resolved hosts and observed tmux/screen session
+/// names) plus failed login attempts from btmp.
 fn draw_history(f: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::History;
-    let (total, live) = (
-        app.snap.connections.len(),
-        app.snap.connections.iter().filter(|c| c.is_live()).count(),
-    );
+    let live = app.snap.connections.iter().filter(|c| c.is_live()).count();
+    let total = app.snap.connections.len();
+    let failed_n = app.snap.failed.len();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
         .title(Line::from(vec![
             Span::styled(" CONNECTION HISTORY ", style_title(focused)),
             Span::styled(
-                format!("{} total · {} live", total, live),
+                format!("{} sessions · {} live · {} failed", total, live, failed_n),
                 Style::default().fg(Color::Gray),
             ),
         ]));
 
-    let mut conns: Vec<&Connection> = app.snap.connections.iter().collect();
-    conns.sort_by(|a, b| b.login_unix.cmp(&a.login_unix));
+    // combined timeline: connections + failed attempts, newest first
+    let mut rows: Vec<(i64, HistoryRow)> = Vec::new();
+    for c in &app.snap.connections {
+        rows.push((c.login_unix, HistoryRow::Conn(c)));
+    }
+    for f in &app.snap.failed {
+        rows.push((f.at, HistoryRow::Failed(f)));
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
 
     let header = Row::new(vec![
         Cell::from("USER"),
         Cell::from("FROM"),
-        Cell::from("TTY"),
+        Cell::from("SESSION"),
         Cell::from("LOGIN"),
         Cell::from("DURATION"),
     ])
     .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
     let now = app.snap.taken_at;
-    let mut rows: Vec<Row> = Vec::new();
-    for c in &conns {
-        let live = c.is_live();
-        let marker = if live { "●" } else { " " };
-        let from_style = if live {
-            Style::default().fg(Color::Cyan)
-        } else {
-            // ssh connections keep the cyan host; local ones fade out
-            Style::default().fg(if c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
-        };
-        let duration = if live {
-            Span::styled(
-                "live",
-                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
-            )
-        } else {
-            let secs = c.logout_unix.unwrap_or(now).saturating_sub(c.login_unix).max(0);
-            Span::styled(fmt_duration(secs), Style::default().fg(Color::Gray))
-        };
-        rows.push(Row::new(vec![
-            Cell::from(format!("{}{}", marker, c.user)).style(if live {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            }),
-            Cell::from(c.host.clone()).style(from_style),
-            Cell::from(c.line.clone()).style(Style::default().fg(Color::DarkGray)),
-            Cell::from(fmt_hms(c.login_unix)).style(Style::default().fg(Color::Gray)),
-            Cell::from(Line::from(duration)),
-        ]));
+    let mut table_rows: Vec<Row> = Vec::new();
+    for (_, r) in &rows {
+        match r {
+            HistoryRow::Conn(c) => {
+                let live = c.is_live();
+                let marker = if live { "●" } else { " " };
+                let from_style = if live {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(if c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
+                };
+                let session_span = match &c.name {
+                    Some(n) => Span::styled(
+                        format!("«{}»", n),
+                        Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
+                    ),
+                    None => Span::raw(""),
+                };
+                let duration = if live {
+                    Span::styled("live", Style::default().fg(GOOD).add_modifier(Modifier::BOLD))
+                } else {
+                    let secs = c.logout_unix.unwrap_or(now).saturating_sub(c.login_unix).max(0);
+                    Span::styled(fmt_duration(secs), Style::default().fg(Color::Gray))
+                };
+                table_rows.push(Row::new(vec![
+                    Cell::from(format!("{}{}", marker, c.user)).style(if live {
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    }),
+                    Cell::from(c.host.clone()).style(from_style),
+                    Cell::from(Line::from(session_span)),
+                    Cell::from(fmt_hms(c.login_unix)).style(Style::default().fg(Color::Gray)),
+                    Cell::from(Line::from(duration)),
+                ]));
+            }
+            HistoryRow::Failed(f) => {
+                table_rows.push(Row::new(vec![
+                    Cell::from(format!("✗{}", f.user)).style(Style::default().fg(BAD)),
+                    Cell::from(f.host.clone()).style(Style::default().fg(BAD)),
+                    Cell::from(f.line.clone()).style(Style::default().fg(Color::DarkGray)),
+                    Cell::from(fmt_hms(f.at)).style(Style::default().fg(Color::DarkGray)),
+                    Cell::from("FAILED").style(Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
+                ]));
+            }
+        }
     }
-    if rows.is_empty() {
-        rows.push(Row::new(vec![Cell::from("(no connection history — /var/log/wtmp empty or unreadable)").style(Style::default().fg(DIM))]));
+    if table_rows.is_empty() {
+        table_rows.push(Row::new(vec![Cell::from("(no history — /var/log/wtmp and /var/log/btmp empty or unreadable)").style(Style::default().fg(DIM))]));
     }
 
     let mut state = TableState::default();
-    state.select(Some(app.conn_sel.min(conns.len().saturating_sub(1))));
+    state.select(Some(app.conn_sel.min(table_rows.len().saturating_sub(1))));
 
-    let table = Table::new(rows, [
-        Constraint::Length(16),
-        Constraint::Length(20),
+    let table = Table::new(table_rows, [
+        Constraint::Length(13),
+        Constraint::Length(19),
+        Constraint::Length(14),
         Constraint::Length(10),
         Constraint::Length(10),
-        Constraint::Length(12),
     ])
     .header(header)
     .block(block)
     .row_highlight_style(Style::default().bg(SEL_BG));
 
     f.render_stateful_widget(table, area, &mut state);
+}
+
+enum HistoryRow<'a> {
+    Conn(&'a Connection),
+    Failed(&'a FailedLogin),
 }
 
 // ---- ticker ---------------------------------------------------------------
@@ -667,13 +695,19 @@ mod tests {
             .collect();
         std::fs::write("target/ui-history-snapshot.txt", &text).ok();
         assert!(text.contains("CONNECTION HISTORY"), "history panel missing");
-        assert!(text.contains("4 total"), "connection count missing");
+        assert!(text.contains("5 sessions"), "session count missing");
         assert!(text.contains("2 live"), "live count missing");
+        assert!(text.contains("2 failed"), "failed count missing");
+        // tailscale-resolved host and session name from the journal
+        assert!(text.contains("jackphelps-mbp"), "tailscale host missing");
+        assert!(text.contains("«cursor-env»"), "journal session name missing");
         // a past connection with a duration
         assert!(text.contains("10.20.30.5"), "from-host missing");
         assert!(text.contains("live"), "live marker missing");
-        // duration formatting for an ended session (1h 0m 0s for 3600s)
         assert!(text.contains("1h 0m"), "duration missing");
+        // failed login rows
+        assert!(text.contains("FAILED"), "failed marker missing");
+        assert!(text.contains("203.0.113.7"), "failed from-host missing");
     }
 
     #[test]

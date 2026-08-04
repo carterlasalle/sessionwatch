@@ -27,15 +27,19 @@ sessions:5  procs:12  orphans:0  load 0.40 0.70 0.60  0.2s FOLLOW OFF  │ 2ssh 
 ```
 
 Press `3` for the connection-history view — every previous connection
-reconstructed from `/var/log/wtmp`, still-open ones marked live:
+reconstructed from `/var/log/wtmp` + sessionwatch's own journal, with
+Tailscale-resolved hosts and observed tmux/screen session names; failed
+login attempts from `/var/log/btmp` show up red:
 
 ```
-┌ CONNECTION HISTORY 4 total · 2 live ──────────────────────────────────────────────────────────────────────┐
-│USER            FROM            TTY        LOGIN      DURATION                                             │
-│●jackphelps     10.20.30.5      pts/0      14:19:06   live                                                │
-│ jackphelps     10.20.30.5      pts/0      13:24:06   30m 0s                                              │
-│●carol          172.16.8.12     pts/2      12:54:06   live                                                │
-│ alice          localhost       pts/1      12:24:06   1h 0m                                               │
+┌ CONNECTION HISTORY 5 sessions · 2 live · 2 failed ──────────────────────────────────────────────────────────┐
+│USER          FROM           SESSION       LOGIN      DURATION                                             │
+│●jackphelps   100.64.0.5                            14:46:01   live                                        │
+│✗root         203.0.113.7    ssh:notty     14:42:41   FAILED                                               │
+│✗root         100.64.0.9     ssh:notty     14:31:01   FAILED                                               │
+│ jackphelps   10.20.30.5                            13:51:01   30m 0s                                      │
+│●carol        172.16.8.12                           13:21:01   live                                        │
+│ dev          jackphelps-mbp «cursor-env»           09:17:41   1h 23m                                     │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -53,8 +57,11 @@ reconstructed from `/var/log/wtmp`, still-open ones marked live:
 - **Activity ticker** — a scrolling feed of every process they spawn and kill,
   plus logins/logouts, in real time
 - **Connection history** — press `3` to reconstruct every previous connection
-  from `/var/log/wtmp`: who connected from where, when, and for how long
-  (even after they've disconnected); still-open ones are marked `● live`
+  from `/var/log/wtmp` **plus sessionwatch's own journal**: who connected
+  from where, when, and for how long — even after they've disconnected.
+  Hosts are **Tailscale-aware** (CGNAT `100.x.y.z` addresses resolve to real
+  tailnet machine names), tmux/screen session names survive in history, and
+  **failed login attempts** from `/var/log/btmp` appear as red `FAILED` rows.
 - **Follow mode** — press `f` to auto-follow the most recently active session;
   your own navigation always wins and turns follow off
 
@@ -129,8 +136,14 @@ sessionwatch --help          full option and key reference
 - **History**: `/var/log/wtmp` is read incrementally (only the appended tail
   plus a small context window per refresh, so it stays cheap even on
   year-old files). `USER_PROCESS` records open a connection, `DEAD_PROCESS`
-  records on the same tty close it — giving you who/from/when/duration for
-  every past connection.
+  records on the same tty close it. On top of that, sessionwatch keeps its
+  **own journal** (`/var/log/sessionwatch/history.log` as root, else under
+  `~/.local/state`) recording every session it observes live — with the
+  tmux/screen session name and the resolved host — so history stays rich even
+  if wtmp is rotated away. **Failed logins** come from `/var/log/btmp`.
+- **Tailscale**: hosts in the CGNAT range (`100.64.0.0/10`) are resolved to
+  real tailnet machine names via `tailscale status` (cached 60s, best-effort
+  — if the CLI is missing the raw address is shown).
 - **Processes**: `/proc/<pid>/stat` is decoded with the kernel `tty_nr` device
   encoding and matched against each session's terminal device, so every process
   is attributed to the tty (and user) running it. CPU% is computed from
@@ -144,8 +157,10 @@ sessionwatch --help          full option and key reference
 Processes of other users are visible only if you can read their
 `/proc/<pid>` entries — run as **root** (or an admin with `ptrace_scope`
 relaxed) for full visibility. Without it you'll see your own sessions only.
-The connection history needs read access to `/var/log/wtmp` (root or the
-`utmp` group).
+History needs read access to `/var/log/wtmp` and `/var/log/btmp` (root or the
+`utmp` group), and Tailscale name resolution needs the `tailscale` CLI to be
+runnable (root typically). The sessionwatch journal is written to
+`/var/log/sessionwatch/` as root, else under `~/.local/state/sessionwatch/`.
 
 ## License
 
