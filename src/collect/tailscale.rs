@@ -45,6 +45,31 @@ pub fn parse_tailscale_status(text: &str) -> HashMap<String, String> {
     map
 }
 
+/// Parse the Tailscale SSH server child's argv to recover the remote
+/// identity. Tailscale tags each session's sshd-side process with
+/// `--remote-user=<email> --remote-ip=<CGNAT ip>`, which is the only place
+/// the *person's* identity (e.g. jackphelps20@gmail.com) is recorded —
+/// utmp only holds the local username. Returns (email, ip).
+pub fn parse_ts_identity(cmdline: &str) -> Option<(String, String)> {
+    let mut email = None;
+    let mut ip = None;
+    for tok in cmdline.split_whitespace() {
+        if let Some(v) = tok.strip_prefix("--remote-user=") {
+            if !v.is_empty() {
+                email = Some(v.to_string());
+            }
+        } else if let Some(v) = tok.strip_prefix("--remote-ip=") {
+            if !v.is_empty() {
+                ip = Some(v.to_string());
+            }
+        }
+    }
+    match (email, ip) {
+        (Some(e), Some(i)) => Some((e, i)),
+        _ => None,
+    }
+}
+
 pub struct TailscaleMap {
     map: HashMap<String, String>,
     last_lookup: Option<Instant>,
@@ -118,15 +143,12 @@ mod tests {
     }
 
     #[test]
-    fn resolves_cgnat_but_passes_others() {
-        use std::time::Instant;
-        let mut ts = TailscaleMap::new();
-        // mark as freshly looked up so resolve() doesn't re-run `tailscale`
-        ts.last_lookup = Some(Instant::now());
-        ts.map.insert("100.64.0.5".into(), "jackphelps-mbp".into());
-        assert_eq!(ts.resolve("100.64.0.5"), "jackphelps-mbp");
-        assert_eq!(ts.resolve("10.20.30.5"), "10.20.30.5");
-        assert_eq!(ts.resolve("laptop.tailnet.ts.net"), "laptop.tailnet.ts.net");
-        assert_eq!(ts.resolve("localhost"), "localhost");
+    fn parses_remote_identity_from_sshd_child() {
+        let cmd = "/usr/bin/ssh --remote-user=jackphelps20@gmail.com --remote-ip=100.119.117.69 --server-addr=100.80.103.86:443";
+        let (email, ip) = parse_ts_identity(cmd).unwrap();
+        assert_eq!(email, "jackphelps20@gmail.com");
+        assert_eq!(ip, "100.119.117.69");
+        assert_eq!(parse_ts_identity("bash -c 'ls'"), None);
+        assert_eq!(parse_ts_identity("ssh --remote-user=noip"), None);
     }
 }

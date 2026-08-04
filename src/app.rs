@@ -23,6 +23,15 @@ pub enum Focus {
 pub enum View {
     Processes,
     History,
+    /// command timeline of one selected connection (drill-down from History)
+    Detail,
+}
+
+/// One row of the combined history timeline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HistoryItem {
+    Conn(usize),   // index into Snapshot::connections
+    Failed(usize), // index into Snapshot::failed
 }
 
 pub struct App {
@@ -37,6 +46,9 @@ pub struct App {
     pub selected: usize,
     pub proc_sel: usize,
     pub conn_sel: usize,
+    /// open session-detail drill-down: index into Snapshot::connections.
+    pub detail: Option<usize>,
+    pub detail_sel: usize,
     pub focus: Focus,
     pub view: View,
     pub follow: bool,
@@ -59,6 +71,8 @@ impl App {
             selected: 0,
             proc_sel: 0,
             conn_sel: 0,
+            detail: None,
+            detail_sel: 0,
             focus: Focus::Sessions,
             view: View::Processes,
             follow: false,
@@ -111,7 +125,30 @@ impl App {
                 .proc_sel
                 .min(self.session_proc_len().saturating_sub(1));
             self.conn_sel = self.conn_sel.min(self.snap.connections.len().saturating_sub(1));
+            if let Some(d) = self.detail {
+                let n = self
+                    .snap
+                    .connections
+                    .get(d)
+                    .map(|c| c.commands.len())
+                    .unwrap_or(0);
+                self.detail_sel = self.detail_sel.min(n.saturating_sub(1));
+            }
         }
+    }
+
+    /// Combined history timeline (connections + failed logins), newest first.
+    /// Mirrors what the history view renders.
+    pub fn history_rows(&self) -> Vec<(i64, HistoryItem)> {
+        let mut rows: Vec<(i64, HistoryItem)> = Vec::new();
+        for (i, c) in self.snap.connections.iter().enumerate() {
+            rows.push((c.login_unix, HistoryItem::Conn(i)));
+        }
+        for (i, f) in self.snap.failed.iter().enumerate() {
+            rows.push((f.at, HistoryItem::Failed(i)));
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows
     }
 
     /// Session with the most recent activity event; keeps the current
@@ -276,6 +313,7 @@ impl App {
                     Focus::Processes => Focus::History,
                     Focus::History => Focus::Sessions,
                 };
+                self.detail = None;
                 if self.focus == Focus::Processes {
                     self.view = View::Processes;
                 }
@@ -291,25 +329,40 @@ impl App {
             KeyCode::Right => {
                 self.focus = match self.view {
                     View::Processes => Focus::Processes,
-                    View::History => Focus::History,
+                    View::History | View::Detail => Focus::History,
                 };
                 Ok(())
             }
             KeyCode::Char('1') => {
                 self.focus = Focus::Sessions;
+                self.detail = None;
                 Ok(())
             }
             KeyCode::Char('2') | KeyCode::Char('p') => {
                 self.focus = Focus::Processes;
                 self.view = View::Processes;
+                self.detail = None;
                 Ok(())
             }
             KeyCode::Char('3') | KeyCode::Char('t') => {
                 self.focus = Focus::History;
                 self.view = View::History;
+                self.detail = None;
                 Ok(())
             }
             KeyCode::Down | KeyCode::Char('j') => {
+                if self.view == View::Detail {
+                    if let Some(d) = self.detail {
+                        let n = self
+                            .snap
+                            .connections
+                            .get(d)
+                            .map(|c| c.commands.len())
+                            .unwrap_or(0);
+                        self.detail_sel = self.detail_sel.saturating_add(1).min(n.saturating_sub(1));
+                    }
+                    return Ok(());
+                }
                 match self.focus {
                     Focus::Sessions => {
                         if !self.snap.sessions.is_empty() {
@@ -330,6 +383,10 @@ impl App {
                 Ok(())
             }
             KeyCode::Up | KeyCode::Char('k') => {
+                if self.view == View::Detail {
+                    self.detail_sel = self.detail_sel.saturating_sub(1);
+                    return Ok(());
+                }
                 match self.focus {
                     Focus::Sessions => {
                         if !self.snap.sessions.is_empty() {
@@ -345,6 +402,27 @@ impl App {
                     Focus::History => {
                         self.conn_sel = self.conn_sel.saturating_sub(1);
                     }
+                }
+                Ok(())
+            }
+            KeyCode::Enter => {
+                if self.view == View::Detail {
+                    self.view = View::History;
+                    self.detail = None;
+                } else if self.view == View::History {
+                    // drill into the selected row if it's a connection
+                    if let Some((_, HistoryItem::Conn(idx))) = self.history_rows().get(self.conn_sel) {
+                        self.detail = Some(*idx);
+                        self.detail_sel = 0;
+                        self.view = View::Detail;
+                    }
+                }
+                Ok(())
+            }
+            KeyCode::Esc => {
+                if self.view == View::Detail {
+                    self.view = View::History;
+                    self.detail = None;
                 }
                 Ok(())
             }

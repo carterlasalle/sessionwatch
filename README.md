@@ -27,20 +27,29 @@ sessions:5  procs:12  orphans:0  load 0.40 0.70 0.60  0.2s FOLLOW OFF  │ 2ssh 
 ```
 
 Press `3` for the connection-history view — every previous connection
-reconstructed from `/var/log/wtmp` + sessionwatch's own journal, with
-Tailscale-resolved hosts and observed tmux/screen session names; failed
-login attempts from `/var/log/btmp` show up red:
+reconstructed from `/var/log/wtmp` + sessionwatch's own journal. Tailscale
+sessions carry the person's real identity email; failed login attempts from
+`/var/log/btmp` show up red; `Enter` drills into a connection's command
+timeline:
 
 ```
 ┌ CONNECTION HISTORY 5 sessions · 2 live · 2 failed ──────────────────────────────────────────────────────────┐
-│USER          FROM           SESSION       LOGIN      DURATION                                             │
-│●jackphelps   100.64.0.5                            14:46:01   live                                        │
-│✗root         203.0.113.7    ssh:notty     14:42:41   FAILED                                               │
-│✗root         100.64.0.9     ssh:notty     14:31:01   FAILED                                               │
-│ jackphelps   10.20.30.5                            13:51:01   30m 0s                                      │
-│●carol        172.16.8.12                           13:21:01   live                                        │
-│ dev          jackphelps-mbp «cursor-env»           09:17:41   1h 23m                                     │
+│USER     FROM                    SESSION     LOGIN    DURATION                                             │
+│●jackpheljackphelps20@gmail.com             15:07:14 live                                                 │
+│✗root    203.0.113.7             ssh:notty   15:03:54 FAILED                                               │
+│✗root    100.64.0.9              ssh:notty   14:52:14 FAILED                                               │
+│ dev     jackphelps20@gmail.com  «cursor-env»09:38:54 1h 23m                                              │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌ SESSION DETAIL  dev@jackphelps20@gmail.com  pts/3  ────────────────────────────────────────────────────────┐
+│dev@jackphelps20@gmail.com  [SSH]  ·  pid 904  «cursor-env»                                                 │
+│  connected 09:38:54  →  11:02:14  (1h 23m)                                                                  │
+│ COMMANDS (as observed live) 4 recorded                                                                      │
+│ 09:47:14  cargo build --release                                                                             │
+│ 09:57:14  vim configs/trtllm-orin.yaml                                                                      │
+│ 10:10:34  docker compose up -d                                                                              │
+│ 10:22:14  tegrastats --interval 1000                                                                        │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
@@ -59,9 +68,11 @@ login attempts from `/var/log/btmp` show up red:
 - **Connection history** — press `3` to reconstruct every previous connection
   from `/var/log/wtmp` **plus sessionwatch's own journal**: who connected
   from where, when, and for how long — even after they've disconnected.
-  Hosts are **Tailscale-aware** (CGNAT `100.x.y.z` addresses resolve to real
-  tailnet machine names), tmux/screen session names survive in history, and
-  **failed login attempts** from `/var/log/btmp` appear as red `FAILED` rows.
+  **Tailscale sessions** (which never appear in wtmp) show the person's real
+  tailnet email, tmux/screen session names survive in history, **failed login
+  attempts** from `/var/log/btmp` appear as red `FAILED` rows, and pressing
+  `Enter` drills into any connection to show the **timeline of commands they
+  ran** as sessionwatch observed them.
 - **Follow mode** — press `f` to auto-follow the most recently active session;
   your own navigation always wins and turns follow off
 
@@ -123,6 +134,8 @@ sessionwatch --help          full option and key reference
 | `1` / `2` / `3` | switch views: sessions / live processes / connection history |
 | `↑` / `↓` / `j` / `k` | move selection (in the focused panel) |
 | `←` / `→` / `Tab` | switch focus between sessions and the right panel |
+| `Enter`       | in HISTORY: drill into a connection's command timeline |
+| `Esc`         | back from the session detail view                     |
 | `f`          | toggle FOLLOW — auto-follow the most recently active session |
 | `space` / `r` | refresh snapshot immediately         |
 | `+` / `-`    | speed up / slow down auto-refresh       |
@@ -143,7 +156,15 @@ sessionwatch --help          full option and key reference
   if wtmp is rotated away. **Failed logins** come from `/var/log/btmp`.
 - **Tailscale**: hosts in the CGNAT range (`100.64.0.0/10`) are resolved to
   real tailnet machine names via `tailscale status` (cached 60s, best-effort
-  — if the CLI is missing the raw address is shown).
+  — if the CLI is missing the raw address is shown). The **person's identity
+  email** (e.g. `jackphelps20@gmail.com`) is recovered from the Tailscale
+  sshd child processes, which carry `--remote-user=` / `--remote-ip=` in
+  their argv — that's how a session gets attributed to a real person even
+  though Tailscale SSH never writes a normal utmp entry.
+- **Command journal**: every process sessionwatch observes spawning on a
+  session's tty is appended to the journal (`P` records), so the history
+  drill-down can replay what each connection ran, in order, with timestamps —
+  no reading of `~/.bash_history` or other private files.
 - **Processes**: `/proc/<pid>/stat` is decoded with the kernel `tty_nr` device
   encoding and matched against each session's terminal device, so every process
   is attributed to the tty (and user) running it. CPU% is computed from

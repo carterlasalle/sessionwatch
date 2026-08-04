@@ -30,6 +30,11 @@ pub struct LinuxCollector {
     tailscale: TailscaleMap,
     journal: Journal,
     prev_sessions: Vec<Session>,
+    /// CGNAT ip -> tailnet identity email, from tailscaled sshd children.
+    ts_identities: HashMap<String, String>,
+    /// pid -> session index from the previous pass (for spawn journaling).
+    prev_tty: HashMap<u32, usize>,
+    have_baseline: bool,
 }
 
 impl LinuxCollector {
@@ -46,6 +51,9 @@ impl LinuxCollector {
             tailscale: TailscaleMap::new(),
             journal: Journal::new(),
             prev_sessions: Vec::new(),
+            ts_identities: HashMap::new(),
+            prev_tty: HashMap::new(),
+            have_baseline: false,
         }
     }
 }
@@ -81,6 +89,7 @@ impl Collector for LinuxCollector {
         let mut procs: Vec<Proc> = Vec::new();
         let mut orphans: Vec<Proc> = Vec::new();
         let mut cur_ticks: HashMap<u32, (u64, u64)> = HashMap::new();
+        self.ts_identities.clear();
 
         for pid in read_dir_numeric(&self.proc_root) {
             let base = self.proc_root.join(pid.to_string());
@@ -105,6 +114,12 @@ impl Collector for LinuxCollector {
             let uid = read_uid(&base).unwrap_or(u32::MAX);
             let user = self.uid_name(uid);
             let command = read_cmdline(&base);
+            // Tailscale sshd children carry the remote person's identity.
+            if command.contains("--remote-user=") {
+                if let Some((email, ip)) = super::tailscale::parse_ts_identity(&command) {
+                    self.ts_identities.insert(ip, email);
+                }
+            }
             let command = if command.is_empty() { comm.clone() } else { command };
 
             let rss_kb = get(&post, 21).unwrap_or(0) as u64 * self.page_size / 1024;
@@ -140,7 +155,8 @@ impl Collector for LinuxCollector {
 
         assign_kinds(&mut sessions, &procs);
 
-        // Human session names from tmux/screen/zellij argv on each tty.
+        // Human session names from tmux/screen/zellij argv on each tty, and
+        // Tailscale identity (email) from the sshd child args.
         for (i, s) in sessions.iter_mut().enumerate() {
             if s.name.is_none() {
                 let cmdlines = procs
@@ -149,6 +165,9 @@ impl Collector for LinuxCollector {
                     .map(|p| p.cmdline.as_str());
                 s.name = super::session_name_from_cmdlines(cmdlines);
             }
+            if let Some(email) = self.ts_identities.get(&s.host) {
+                s.identity = Some(email.clone());
+            }
             // Tailscale: turn CGNAT addresses into real tailnet machine names.
             s.host = self.tailscale.resolve(&s.host);
         }
@@ -156,6 +175,30 @@ impl Collector for LinuxCollector {
         // Journal: persist what we observe live so history is richer later.
         self.journal.observe(&self.prev_sessions, &sessions);
         self.prev_sessions = sessions.clone();
+
+        // Journal commands as they spawn on each session's tty.
+        if self.have_baseline {
+            let cur_tty: HashMap<u32, usize> = procs
+                .iter()
+                .filter_map(|p| p.session_idx.map(|i| (p.pid, i)))
+                .collect();
+            for p in &procs {
+                let Some(i) = p.session_idx else { continue };
+                if !self.prev_tty.contains_key(&p.pid) {
+                    if let Some(s) = sessions.get(i) {
+                        self.journal
+                            .spawn(&s.line, s.pid, now_unix, &p.cmdline);
+                    }
+                }
+            }
+            self.prev_tty = cur_tty;
+        } else {
+            self.prev_tty = procs
+                .iter()
+                .filter_map(|p| p.session_idx.map(|i| (p.pid, i)))
+                .collect();
+            self.have_baseline = true;
+        }
 
         self.prev_ticks = cur_ticks;
         self.prev_at = Some(now);

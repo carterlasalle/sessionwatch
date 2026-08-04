@@ -12,8 +12,8 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{App, Focus, View};
-use crate::model::{Connection, FailedLogin, Proc, SessionKind};
+use crate::app::{App, Focus, HistoryItem, View};
+use crate::model::{Proc, SessionKind};
 
 pub type Terminal = ratatui::Terminal<CrosstermBackend<Stdout>>;
 
@@ -135,6 +135,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
     match app.view {
         View::Processes => draw_processes(f, chunks[1], app),
         View::History => draw_history(f, chunks[1], app),
+        View::Detail => draw_detail(f, chunks[1], app),
     }
 }
 
@@ -158,7 +159,10 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(" "),
             Span::styled(&s.user, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Span::styled("@", Style::default().fg(DIM)),
-            Span::styled(&s.host, Style::default().fg(Color::Gray)),
+            Span::styled(
+                s.identity.as_deref().unwrap_or(&s.host),
+                Style::default().fg(if s.identity.is_some() { Color::Magenta } else { Color::Gray }),
+            ),
             Span::raw(" "),
             Span::styled(format!("[{}]", s.kind.label()), Style::default().fg(kind_color(s.kind)).add_modifier(Modifier::BOLD)),
         ]);
@@ -288,6 +292,7 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(2),
         Constraint::Min(12),
     ])
+    .column_spacing(0)
     .header(header)
     .block(block)
     .row_highlight_style(Style::default().bg(SEL_BG));
@@ -295,7 +300,7 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
-/// Reconstructed history: every previous connection (from wtmp + sessionwatch's
+/// Drill-down: the full command timeline of one connection, as observed live
 /// journal, with Tailscale-resolved hosts and observed tmux/screen session
 /// names) plus failed login attempts from btmp.
 fn draw_history(f: &mut Frame, area: Rect, app: &App) {
@@ -315,14 +320,7 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
         ]));
 
     // combined timeline: connections + failed attempts, newest first
-    let mut rows: Vec<(i64, HistoryRow)> = Vec::new();
-    for c in &app.snap.connections {
-        rows.push((c.login_unix, HistoryRow::Conn(c)));
-    }
-    for f in &app.snap.failed {
-        rows.push((f.at, HistoryRow::Failed(f)));
-    }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let rows: Vec<(i64, HistoryItem)> = app.history_rows();
 
     let header = Row::new(vec![
         Cell::from("USER"),
@@ -337,13 +335,15 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
     let mut table_rows: Vec<Row> = Vec::new();
     for (_, r) in &rows {
         match r {
-            HistoryRow::Conn(c) => {
+            HistoryItem::Conn(idx) => {
+                let c = &app.snap.connections[*idx];
                 let live = c.is_live();
                 let marker = if live { "●" } else { " " };
+                let from = c.identity.as_deref().unwrap_or(&c.host);
                 let from_style = if live {
                     Style::default().fg(Color::Cyan)
                 } else {
-                    Style::default().fg(if c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
+                    Style::default().fg(if c.identity.is_some() || c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
                 };
                 let session_span = match &c.name {
                     Some(n) => Span::styled(
@@ -364,13 +364,14 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
                     } else {
                         Style::default().fg(Color::Gray)
                     }),
-                    Cell::from(c.host.clone()).style(from_style),
+                    Cell::from(from.to_string()).style(from_style),
                     Cell::from(Line::from(session_span)),
                     Cell::from(fmt_hms(c.login_unix)).style(Style::default().fg(Color::Gray)),
                     Cell::from(Line::from(duration)),
                 ]));
             }
-            HistoryRow::Failed(f) => {
+            HistoryItem::Failed(fi) => {
+                let f = &app.snap.failed[*fi];
                 table_rows.push(Row::new(vec![
                     Cell::from(format!("✗{}", f.user)).style(Style::default().fg(BAD)),
                     Cell::from(f.host.clone()).style(Style::default().fg(BAD)),
@@ -389,12 +390,13 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
     state.select(Some(app.conn_sel.min(table_rows.len().saturating_sub(1))));
 
     let table = Table::new(table_rows, [
-        Constraint::Length(13),
-        Constraint::Length(19),
-        Constraint::Length(14),
-        Constraint::Length(10),
+        Constraint::Length(9),
+        Constraint::Length(24),
+        Constraint::Length(12),
+        Constraint::Length(9),
         Constraint::Length(10),
     ])
+    .column_spacing(0)
     .header(header)
     .block(block)
     .row_highlight_style(Style::default().bg(SEL_BG));
@@ -402,9 +404,93 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
-enum HistoryRow<'a> {
-    Conn(&'a Connection),
-    Failed(&'a FailedLogin),
+/// Drill-down: the full command timeline of one connection, as observed live
+/// by sessionwatch (reconstructed from the journal).
+fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
+    let focused = app.focus == Focus::History;
+    let border = if focused { ACCENT } else { DIM };
+    let Some(idx) = app.detail else { return };
+    let Some(c) = app.snap.connections.get(idx) else { return };
+
+    let who = c.identity.as_deref().unwrap_or(&c.host);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border))
+        .title(Line::from(vec![
+            Span::styled(" SESSION DETAIL ", style_title(focused)),
+            Span::styled(format!("{}@{}  {}  ", c.user, who, c.line), Style::default().fg(Color::Gray)),
+        ]));
+
+    let mut lines: Vec<Line> = Vec::new();
+    let meta1 = Line::from(vec![
+        Span::styled(&c.user, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("@", Style::default().fg(DIM)),
+        Span::styled(who, Style::default().fg(if c.identity.is_some() { Color::Magenta } else { Color::Cyan })),
+        Span::styled("  ", Style::default()),
+        Span::styled(format!("[{}]", c.kind.label()), Style::default().fg(kind_color(c.kind)).add_modifier(Modifier::BOLD)),
+        Span::styled("  ·  ", Style::default().fg(DIM)),
+        Span::styled("pid ", Style::default().fg(DIM)),
+        Span::styled(c.pid.to_string(), Style::default().fg(Color::Gray)),
+        match &c.name {
+            Some(n) => Span::styled(
+                format!("  «{}»", n),
+                Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
+            ),
+            None => Span::raw(""),
+        },
+    ]);
+    let (dur_text, dur_style) = match c.logout_unix {
+        Some(l) => (
+            format!(
+                "{}  →  {}  ({})",
+                fmt_hms(c.login_unix),
+                fmt_hms(l),
+                fmt_duration(l.saturating_sub(c.login_unix).max(0))
+            ),
+            Style::default().fg(Color::Gray),
+        ),
+        None => (
+            format!("{}  →  now  (live)", fmt_hms(c.login_unix)),
+            Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+        ),
+    };
+    let meta2 = Line::from(vec![
+        Span::styled("  connected ", Style::default().fg(DIM)),
+        Span::styled(dur_text, dur_style),
+    ]);
+    lines.push(meta1);
+    lines.push(meta2);
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" COMMANDS (as observed live) ", Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{} recorded", c.commands.len()), Style::default().fg(Color::DarkGray)),
+    ]));
+    lines.push(Line::from(""));
+    for (i, (t, cmd)) in c.commands.iter().enumerate() {
+        let selected = i == app.detail_sel;
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {}  ", fmt_hms(*t)),
+                Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+            ),
+            Span::styled(
+                cmd.clone(),
+                Style::default().fg(if selected { ACCENT } else { Color::White })
+                    .add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }),
+            ),
+        ]));
+    }
+    if c.commands.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " (no commands recorded — sessionwatch wasn't watching this session yet)",
+            Style::default().fg(DIM),
+        )));
+    }
+
+    // scroll so the selection stays in view
+    let inner_h = block.inner(area).height as usize;
+    let scroll = app.detail_sel.saturating_sub(inner_h / 2) as u16;
+    f.render_widget(Paragraph::new(lines).block(block).scroll((scroll, 0)), area);
 }
 
 // ---- ticker ---------------------------------------------------------------
@@ -449,12 +535,16 @@ fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
 // ---- status bar -----------------------------------------------------------
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
-    let hints = match app.focus {
-        Focus::Sessions => {
-            "1/2/3 views · ↑↓ select session · f follow · +/- speed · h help · q quit"
+    let hints = if app.view == View::Detail {
+        "↑↓ scroll commands · Enter/Esc back to history · q quit"
+    } else {
+        match app.focus {
+            Focus::Sessions => {
+                "1/2/3 views · ↑↓ select session · f follow · +/- speed · h help · q quit"
+            }
+            Focus::Processes => "↑↓ scroll processes · ← sessions · 2 processes · 3 history · space refresh · q quit",
+            Focus::History => "↑↓ scroll history · Enter drill-down · ← sessions · 2/3 views · q quit",
         }
-        Focus::Processes => "↑↓ scroll processes · ← sessions · 2 processes · 3 history · space refresh · q quit",
-        Focus::History => "↑↓ scroll history · ← sessions · 2 processes · 3 history · q quit",
     };
     let line = Line::from(vec![
         Span::styled(" sessionwatch ", Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)),
@@ -467,7 +557,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_help(f: &mut Frame, area: Rect) {
     let w = (area.width.saturating_mul(2) / 3).max(40);
-    let h = 22.min(area.height.saturating_sub(2)).max(12);
+    let h = 24.min(area.height.saturating_sub(2)).max(12);
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
     let box_area = Rect { x, y, width: w, height: h };
@@ -483,6 +573,8 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("1 / 2 / 3", "switch views: sessions / live processes / connection history"),
         ("↑/↓ / j/k", "move selection (in focused panel)"),
         ("← / → / Tab", "switch focus between sessions and the right panel"),
+        ("Enter", "in HISTORY: drill into a connection's command timeline"),
+        ("Esc", "back from the session detail view"),
         ("f", "toggle FOLLOW — auto-follow the most recently active session"),
         ("space / r", "refresh snapshot immediately"),
         ("+ / -", "speed up / slow down auto-refresh"),
@@ -511,11 +603,15 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(Span::styled(
-        "  HISTORY: previous connections reconstructed from /var/log/wtmp —",
+        "  HISTORY: previous connections reconstructed from wtmp + sessionwatch's",
         Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(Span::styled(
-        "  who connected from where, when, and for how long; ● = still live.",
+        "  journal. Tailscale sessions (which never hit wtmp) appear with the",
+        Style::default().fg(Color::Gray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  person's tailnet email, and Enter shows the commands they ran.",
         Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
@@ -698,8 +794,8 @@ mod tests {
         assert!(text.contains("5 sessions"), "session count missing");
         assert!(text.contains("2 live"), "live count missing");
         assert!(text.contains("2 failed"), "failed count missing");
-        // tailscale-resolved host and session name from the journal
-        assert!(text.contains("jackphelps-mbp"), "tailscale host missing");
+        // tailscale identity email and session name from the journal
+        assert!(text.contains("jackphelps20@gmail.com"), "tailscale identity missing");
         assert!(text.contains("«cursor-env»"), "journal session name missing");
         // a past connection with a duration
         assert!(text.contains("10.20.30.5"), "from-host missing");
@@ -708,6 +804,38 @@ mod tests {
         // failed login rows
         assert!(text.contains("FAILED"), "failed marker missing");
         assert!(text.contains("203.0.113.7"), "failed from-host missing");
+    }
+
+    #[test]
+    fn session_detail_renders_commands() {
+        let mut app = App::new(collect::test_collector(), Duration::from_millis(250));
+        app.refresh();
+        // find the dev connection (index with the cursor-env commands)
+        let idx = app
+            .snap
+            .connections
+            .iter()
+            .position(|c| c.name.as_deref() == Some("cursor-env"))
+            .expect("fixture connection");
+        app.view = View::Detail;
+        app.focus = Focus::History;
+        app.detail = Some(idx);
+        let backend = TestBackend::new(110, 30);
+        let mut term = RatTerminal::new(backend).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        std::fs::write("target/ui-detail-snapshot.txt", &text).ok();
+        assert!(text.contains("SESSION DETAIL"), "detail panel missing");
+        assert!(text.contains("jackphelps20@gmail.com"), "identity missing in detail");
+        assert!(text.contains("cargo build --release"), "command timeline missing");
+        assert!(text.contains("tegrastats --interval 1000"), "later command missing");
+        assert!(text.contains("connected"), "connection window missing");
     }
 
     #[test]

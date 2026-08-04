@@ -34,6 +34,8 @@ pub struct Session {
     pub device: String,
     /// remote host, or "console"/"localhost" for local sessions.
     pub host: String,
+    /// Tailscale remote identity (email) when known from the sshd child args.
+    pub identity: Option<String>,
     /// human session name when meaningful: tmux/zellij/screen session name.
     pub name: Option<String>,
     pub kind: SessionKind,
@@ -85,8 +87,13 @@ pub struct Connection {
     pub line: String,
     /// remote host, Tailscale-resolved when possible; "localhost" for local.
     pub host: String,
+    /// Tailscale remote identity (email) when known.
+    pub identity: Option<String>,
     /// tmux/zellij/screen session name observed while it was live.
     pub name: Option<String>,
+    /// commands observed on this connection (unix time, argv) — the
+    /// reconstructed timeline of what the person ran.
+    pub commands: Vec<(i64, String)>,
     pub kind: SessionKind,
     pub pid: u32,
     pub login_unix: i64,
