@@ -8,9 +8,10 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::model::{Proc, Session, SessionKind, Snapshot};
+use crate::model::{Connection, Proc, Session, SessionKind, Snapshot};
 
 use super::utmp;
+use super::wtmp::WtmpReader;
 use super::Collector;
 
 pub struct LinuxCollector {
@@ -21,6 +22,7 @@ pub struct LinuxCollector {
     prev_ticks: HashMap<u32, (u64, u64)>,
     prev_at: Option<Instant>,
     users: HashMap<u32, String>,
+    wtmp: WtmpReader,
 }
 
 impl LinuxCollector {
@@ -32,6 +34,7 @@ impl LinuxCollector {
             prev_ticks: HashMap::new(),
             prev_at: None,
             users: HashMap::new(),
+            wtmp: WtmpReader::new(),
         }
     }
 }
@@ -140,10 +143,13 @@ impl Collector for LinuxCollector {
         self.prev_ticks = cur_ticks;
         self.prev_at = Some(now);
 
+        let connections: Vec<Connection> = self.wtmp.refresh();
+
         Snapshot {
             sessions,
             procs,
             orphans,
+            connections,
             load,
             boot_unix,
             taken_at: now_unix,

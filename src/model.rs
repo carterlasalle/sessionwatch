@@ -76,6 +76,27 @@ pub struct Event {
     pub kind: &'static str,
 }
 
+/// A past (or still-open) terminal connection, reconstructed from wtmp.
+#[derive(Clone, Debug)]
+pub struct Connection {
+    pub user: String,
+    /// terminal line, e.g. `pts/3` or `tty1`.
+    pub line: String,
+    /// remote host, or "localhost" for local sessions.
+    pub host: String,
+    pub kind: SessionKind,
+    pub pid: u32,
+    pub login_unix: i64,
+    /// when the session ended; `None` = still connected.
+    pub logout_unix: Option<i64>,
+}
+
+impl Connection {
+    pub fn is_live(&self) -> bool {
+        self.logout_unix.is_none()
+    }
+}
+
 /// One full observation of the system.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
@@ -84,6 +105,8 @@ pub struct Snapshot {
     pub procs: Vec<Proc>,
     /// processes with a tty we could not resolve to a known session.
     pub orphans: Vec<Proc>,
+    /// every previous connection reconstructed from wtmp (newest by login).
+    pub connections: Vec<Connection>,
     pub load: [f64; 3],
     pub boot_unix: i64,
     pub taken_at: i64,

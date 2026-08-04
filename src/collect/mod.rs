@@ -5,12 +5,13 @@
 
 pub mod linux;
 pub mod utmp;
+pub mod wtmp;
 
 #[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
-use crate::model::{Proc, Session, SessionKind};
+use crate::model::{Connection, Proc, Session, SessionKind};
 use crate::model::Snapshot;
 
 /// Produces a [`Snapshot`] on demand. Implementations keep whatever state they
@@ -158,10 +159,49 @@ pub fn test_collector() -> Box<dyn Collector> {
             push("dev", 3, "zsh", 800.0, 0.3);
             push("ops", 4, "tail -f /var/log/nginx/access.log", 60.0, 1.5);
             push("ops", 4, "screen", 400.0, 0.4);
+            let connections = vec![
+                Connection {
+                    user: "jackphelps".into(),
+                    line: "pts/0".into(),
+                    host: "10.20.30.5".into(),
+                    kind: SessionKind::Ssh,
+                    pid: 900,
+                    login_unix: now - 3600,
+                    logout_unix: Some(now - 1800),
+                },
+                Connection {
+                    user: "alice".into(),
+                    line: "pts/1".into(),
+                    host: "localhost".into(),
+                    kind: SessionKind::Local,
+                    pid: 901,
+                    login_unix: now - 7200,
+                    logout_unix: Some(now - 3600),
+                },
+                Connection {
+                    user: "carol".into(),
+                    line: "pts/2".into(),
+                    host: "172.16.8.12".into(),
+                    kind: SessionKind::Ssh,
+                    pid: 902,
+                    login_unix: now - 5400,
+                    logout_unix: None,
+                },
+                Connection {
+                    user: "jackphelps".into(),
+                    line: "pts/0".into(),
+                    host: "10.20.30.5".into(),
+                    kind: SessionKind::Ssh,
+                    pid: 903,
+                    login_unix: now - 300,
+                    logout_unix: None,
+                },
+            ];
             Snapshot {
                 sessions,
                 procs,
                 orphans: Vec::new(),
+                connections,
                 load: [0.4, 0.7, 0.6],
                 boot_unix: now - 86_400,
                 taken_at: now,

@@ -15,6 +15,14 @@ const HISTORY_LEN: usize = 42;
 pub enum Focus {
     Sessions,
     Processes,
+    History,
+}
+
+/// Which panel the right-hand side shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Processes,
+    History,
 }
 
 pub struct App {
@@ -28,7 +36,9 @@ pub struct App {
     pub last_activity: Vec<i64>,
     pub selected: usize,
     pub proc_sel: usize,
+    pub conn_sel: usize,
     pub focus: Focus,
+    pub view: View,
     pub follow: bool,
     pub interval: Duration,
     pub last_refresh: Instant,
@@ -48,7 +58,9 @@ impl App {
             last_activity: Vec::new(),
             selected: 0,
             proc_sel: 0,
+            conn_sel: 0,
             focus: Focus::Sessions,
+            view: View::Processes,
             follow: false,
             interval,
             last_refresh: Instant::now(),
@@ -98,6 +110,7 @@ impl App {
             self.proc_sel = self
                 .proc_sel
                 .min(self.session_proc_len().saturating_sub(1));
+            self.conn_sel = self.conn_sel.min(self.snap.connections.len().saturating_sub(1));
         }
     }
 
@@ -260,8 +273,15 @@ impl App {
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = match self.focus {
                     Focus::Sessions => Focus::Processes,
-                    Focus::Processes => Focus::Sessions,
+                    Focus::Processes => Focus::History,
+                    Focus::History => Focus::Sessions,
                 };
+                if self.focus == Focus::Processes {
+                    self.view = View::Processes;
+                }
+                if self.focus == Focus::History {
+                    self.view = View::History;
+                }
                 Ok(())
             }
             KeyCode::Left => {
@@ -269,7 +289,24 @@ impl App {
                 Ok(())
             }
             KeyCode::Right => {
+                self.focus = match self.view {
+                    View::Processes => Focus::Processes,
+                    View::History => Focus::History,
+                };
+                Ok(())
+            }
+            KeyCode::Char('1') => {
+                self.focus = Focus::Sessions;
+                Ok(())
+            }
+            KeyCode::Char('2') | KeyCode::Char('p') => {
                 self.focus = Focus::Processes;
+                self.view = View::Processes;
+                Ok(())
+            }
+            KeyCode::Char('3') | KeyCode::Char('t') => {
+                self.focus = Focus::History;
+                self.view = View::History;
                 Ok(())
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -284,6 +321,10 @@ impl App {
                     Focus::Processes => {
                         let n = self.session_proc_len().saturating_sub(1);
                         self.proc_sel = self.proc_sel.saturating_add(1).min(n);
+                    }
+                    Focus::History => {
+                        let n = self.snap.connections.len().saturating_sub(1);
+                        self.conn_sel = self.conn_sel.saturating_add(1).min(n);
                     }
                 }
                 Ok(())
@@ -300,6 +341,9 @@ impl App {
                     }
                     Focus::Processes => {
                         self.proc_sel = self.proc_sel.saturating_sub(1);
+                    }
+                    Focus::History => {
+                        self.conn_sel = self.conn_sel.saturating_sub(1);
                     }
                 }
                 Ok(())

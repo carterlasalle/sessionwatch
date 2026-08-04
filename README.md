@@ -26,6 +26,19 @@ sessions:5  procs:12  orphans:0  load 0.40 0.70 0.60  0.2s FOLLOW OFF  │ 2ssh 
  sessionwatch   ↑↓ select session  •  → processes  •  f follow  •  +/- speed  •  h help  •  q quit
 ```
 
+Press `3` for the connection-history view — every previous connection
+reconstructed from `/var/log/wtmp`, still-open ones marked live:
+
+```
+┌ CONNECTION HISTORY 4 total · 2 live ──────────────────────────────────────────────────────────────────────┐
+│USER            FROM            TTY        LOGIN      DURATION                                             │
+│●jackphelps     10.20.30.5      pts/0      14:19:06   live                                                │
+│ jackphelps     10.20.30.5      pts/0      13:24:06   30m 0s                                              │
+│●carol          172.16.8.12     pts/2      12:54:06   live                                                │
+│ alice          localhost       pts/1      12:24:06   1h 0m                                               │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Features
 
 - **Session radar** — every logged-in terminal from utmpx, tagged
@@ -39,6 +52,9 @@ sessions:5  procs:12  orphans:0  load 0.40 0.70 0.60  0.2s FOLLOW OFF  │ 2ssh 
   launched (newest-first so you see what they did last)
 - **Activity ticker** — a scrolling feed of every process they spawn and kill,
   plus logins/logouts, in real time
+- **Connection history** — press `3` to reconstruct every previous connection
+  from `/var/log/wtmp`: who connected from where, when, and for how long
+  (even after they've disconnected); still-open ones are marked `● live`
 - **Follow mode** — press `f` to auto-follow the most recently active session;
   your own navigation always wins and turns follow off
 
@@ -97,8 +113,9 @@ sessionwatch --help          full option and key reference
 
 | Key          | Action                                  |
 |--------------|-----------------------------------------|
+| `1` / `2` / `3` | switch views: sessions / live processes / connection history |
 | `↑` / `↓` / `j` / `k` | move selection (in the focused panel) |
-| `←` / `→` / `Tab` | switch between sessions and processes |
+| `←` / `→` / `Tab` | switch focus between sessions and the right panel |
 | `f`          | toggle FOLLOW — auto-follow the most recently active session |
 | `space` / `r` | refresh snapshot immediately         |
 | `+` / `-`    | speed up / slow down auto-refresh       |
@@ -109,6 +126,11 @@ sessionwatch --help          full option and key reference
 
 - **Sessions**: parsed directly from `/var/run/utmp` (no `getutxent()` — musl
   ships those as stubs, so this works on glibc *and* musl static builds).
+- **History**: `/var/log/wtmp` is read incrementally (only the appended tail
+  plus a small context window per refresh, so it stays cheap even on
+  year-old files). `USER_PROCESS` records open a connection, `DEAD_PROCESS`
+  records on the same tty close it — giving you who/from/when/duration for
+  every past connection.
 - **Processes**: `/proc/<pid>/stat` is decoded with the kernel `tty_nr` device
   encoding and matched against each session's terminal device, so every process
   is attributed to the tty (and user) running it. CPU% is computed from
@@ -122,6 +144,8 @@ sessionwatch --help          full option and key reference
 Processes of other users are visible only if you can read their
 `/proc/<pid>` entries — run as **root** (or an admin with `ptrace_scope`
 relaxed) for full visibility. Without it you'll see your own sessions only.
+The connection history needs read access to `/var/log/wtmp` (root or the
+`utmp` group).
 
 ## License
 

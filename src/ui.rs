@@ -12,8 +12,8 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{App, Focus};
-use crate::model::{Proc, SessionKind};
+use crate::app::{App, Focus, View};
+use crate::model::{Connection, Proc, SessionKind};
 
 pub type Terminal = ratatui::Terminal<CrosstermBackend<Stdout>>;
 
@@ -132,7 +132,10 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
     draw_sessions(f, chunks[0], app);
-    draw_processes(f, chunks[1], app);
+    match app.view {
+        View::Processes => draw_processes(f, chunks[1], app),
+        View::History => draw_history(f, chunks[1], app),
+    }
 }
 
 fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
@@ -292,6 +295,90 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
     f.render_stateful_widget(table, area, &mut state);
 }
 
+/// Reconstructed previous connections (from wtmp): who, from where, when,
+/// and for how long — with still-open ones marked live.
+fn draw_history(f: &mut Frame, area: Rect, app: &App) {
+    let focused = app.focus == Focus::History;
+    let (total, live) = (
+        app.snap.connections.len(),
+        app.snap.connections.iter().filter(|c| c.is_live()).count(),
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
+        .title(Line::from(vec![
+            Span::styled(" CONNECTION HISTORY ", style_title(focused)),
+            Span::styled(
+                format!("{} total · {} live", total, live),
+                Style::default().fg(Color::Gray),
+            ),
+        ]));
+
+    let mut conns: Vec<&Connection> = app.snap.connections.iter().collect();
+    conns.sort_by(|a, b| b.login_unix.cmp(&a.login_unix));
+
+    let header = Row::new(vec![
+        Cell::from("USER"),
+        Cell::from("FROM"),
+        Cell::from("TTY"),
+        Cell::from("LOGIN"),
+        Cell::from("DURATION"),
+    ])
+    .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+
+    let now = app.snap.taken_at;
+    let mut rows: Vec<Row> = Vec::new();
+    for c in &conns {
+        let live = c.is_live();
+        let marker = if live { "●" } else { " " };
+        let from_style = if live {
+            Style::default().fg(Color::Cyan)
+        } else {
+            // ssh connections keep the cyan host; local ones fade out
+            Style::default().fg(if c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
+        };
+        let duration = if live {
+            Span::styled(
+                "live",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let secs = c.logout_unix.unwrap_or(now).saturating_sub(c.login_unix).max(0);
+            Span::styled(fmt_duration(secs), Style::default().fg(Color::Gray))
+        };
+        rows.push(Row::new(vec![
+            Cell::from(format!("{}{}", marker, c.user)).style(if live {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            }),
+            Cell::from(c.host.clone()).style(from_style),
+            Cell::from(c.line.clone()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(fmt_hms(c.login_unix)).style(Style::default().fg(Color::Gray)),
+            Cell::from(Line::from(duration)),
+        ]));
+    }
+    if rows.is_empty() {
+        rows.push(Row::new(vec![Cell::from("(no connection history — /var/log/wtmp empty or unreadable)").style(Style::default().fg(DIM))]));
+    }
+
+    let mut state = TableState::default();
+    state.select(Some(app.conn_sel.min(conns.len().saturating_sub(1))));
+
+    let table = Table::new(rows, [
+        Constraint::Length(16),
+        Constraint::Length(20),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(12),
+    ])
+    .header(header)
+    .block(block)
+    .row_highlight_style(Style::default().bg(SEL_BG));
+
+    f.render_stateful_widget(table, area, &mut state);
+}
+
 // ---- ticker ---------------------------------------------------------------
 
 fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
@@ -334,10 +421,12 @@ fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
 // ---- status bar -----------------------------------------------------------
 
 fn draw_status(f: &mut Frame, area: Rect, app: &App) {
-    let hints = if app.focus == Focus::Sessions {
-        "↑↓ select session  •  → processes  •  f follow  •  +/- speed  •  h help  •  q quit"
-    } else {
-        "↑↓ scroll processes  •  ← sessions  •  f follow  •  space refresh  •  h help  •  q quit"
+    let hints = match app.focus {
+        Focus::Sessions => {
+            "1/2/3 views · ↑↓ select session · f follow · +/- speed · h help · q quit"
+        }
+        Focus::Processes => "↑↓ scroll processes · ← sessions · 2 processes · 3 history · space refresh · q quit",
+        Focus::History => "↑↓ scroll history · ← sessions · 2 processes · 3 history · q quit",
     };
     let line = Line::from(vec![
         Span::styled(" sessionwatch ", Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)),
@@ -350,7 +439,7 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_help(f: &mut Frame, area: Rect) {
     let w = (area.width.saturating_mul(2) / 3).max(40);
-    let h = 18.min(area.height.saturating_sub(2)).max(12);
+    let h = 22.min(area.height.saturating_sub(2)).max(12);
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
     let box_area = Rect { x, y, width: w, height: h };
@@ -363,8 +452,9 @@ fn draw_help(f: &mut Frame, area: Rect) {
         .style(Style::default().bg(Color::from_u32(0x12121c)));
 
     let rows = [
+        ("1 / 2 / 3", "switch views: sessions / live processes / connection history"),
         ("↑/↓ / j/k", "move selection (in focused panel)"),
-        ("← / → / Tab", "switch between sessions and processes"),
+        ("← / → / Tab", "switch focus between sessions and the right panel"),
         ("f", "toggle FOLLOW — auto-follow the most recently active session"),
         ("space / r", "refresh snapshot immediately"),
         ("+ / -", "speed up / slow down auto-refresh"),
@@ -390,6 +480,14 @@ fn draw_help(f: &mut Frame, area: Rect) {
     )));
     lines.push(Line::from(Span::styled(
         "  logs every process they spawn and kill, and every login/logout.",
+        Style::default().fg(Color::Gray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  HISTORY: previous connections reconstructed from /var/log/wtmp —",
+        Style::default().fg(Color::Gray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  who connected from where, when, and for how long; ● = still live.",
         Style::default().fg(Color::Gray),
     )));
     lines.push(Line::from(""));
@@ -461,6 +559,17 @@ fn fmt_clock(unix: i64) -> String {
         "{:02}:{:02}:{:02}  {:02}-{:02}",
         tm.tm_hour, tm.tm_min, tm.tm_sec, tm.tm_mon + 1, tm.tm_mday
     )
+}
+
+/// Local time-of-day only (for the history LOGIN column).
+#[allow(deprecated)] // libc::time_t width differs across musl targets
+fn fmt_hms(unix: i64) -> String {
+    let t: libc::time_t = unix;
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    unsafe {
+        libc::localtime_r(&t, &mut tm);
+    }
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 fn sparkline(data: &[f64], width: usize) -> String {
@@ -538,6 +647,33 @@ mod tests {
         assert!(text.contains("vim src/main.rs"), "process row missing");
         // status bar hints
         assert!(text.contains("q quit"), "status hints missing");
+    }
+
+    #[test]
+    fn history_view_renders() {
+        let mut app = App::new(collect::test_collector(), Duration::from_millis(250));
+        app.refresh();
+        app.view = View::History;
+        app.focus = Focus::History;
+        let backend = TestBackend::new(110, 30);
+        let mut term = RatTerminal::new(backend).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        std::fs::write("target/ui-history-snapshot.txt", &text).ok();
+        assert!(text.contains("CONNECTION HISTORY"), "history panel missing");
+        assert!(text.contains("4 total"), "connection count missing");
+        assert!(text.contains("2 live"), "live count missing");
+        // a past connection with a duration
+        assert!(text.contains("10.20.30.5"), "from-host missing");
+        assert!(text.contains("live"), "live marker missing");
+        // duration formatting for an ended session (1h 0m 0s for 3600s)
+        assert!(text.contains("1h 0m"), "duration missing");
     }
 
     #[test]
