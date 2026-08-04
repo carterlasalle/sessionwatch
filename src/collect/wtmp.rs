@@ -60,6 +60,7 @@ pub fn parse_wtmp(bytes: &[u8]) -> Vec<Connection> {
                         identity: None,
                         name: None,
                         commands: Vec::new(),
+                    shell_history: Vec::new(),
                         kind,
                         pid,
                         login_unix: tv_sec,

@@ -130,7 +130,7 @@ impl App {
                     .snap
                     .connections
                     .get(d)
-                    .map(|c| c.commands.len())
+                    .map(|c| c.commands.len() + c.shell_history.len())
                     .unwrap_or(0);
                 self.detail_sel = self.detail_sel.min(n.saturating_sub(1));
             }
@@ -357,7 +357,7 @@ impl App {
                             .snap
                             .connections
                             .get(d)
-                            .map(|c| c.commands.len())
+                            .map(|c| c.commands.len() + c.shell_history.len())
                             .unwrap_or(0);
                         self.detail_sel = self.detail_sel.saturating_add(1).min(n.saturating_sub(1));
                     }

@@ -35,6 +35,8 @@ pub struct LinuxCollector {
     /// pid -> session index from the previous pass (for spawn journaling).
     prev_tty: HashMap<u32, usize>,
     have_baseline: bool,
+    /// per-user shell history cache: (mtime, entries)
+    shell_cache: HashMap<String, (std::time::SystemTime, Vec<(Option<i64>, String)>)>,
 }
 
 impl LinuxCollector {
@@ -54,6 +56,7 @@ impl LinuxCollector {
             ts_identities: HashMap::new(),
             prev_tty: HashMap::new(),
             have_baseline: false,
+            shell_cache: HashMap::new(),
         }
     }
 }
@@ -209,6 +212,15 @@ impl Collector for LinuxCollector {
         );
         for c in connections.iter_mut() {
             c.host = self.tailscale.resolve(&c.host);
+            // Retroactive command history from the user's shell files —
+            // windowed to this connection's lifetime.
+            let history = self.shell_history(&c.user);
+            c.shell_history = super::shellhistory::filter_for_connection(
+                &history,
+                c.login_unix,
+                c.logout_unix,
+                now_unix,
+            );
         }
         let mut failed: Vec<FailedLogin> = self.btmp.refresh();
         for f in failed.iter_mut() {
@@ -364,6 +376,33 @@ impl LinuxCollector {
         };
         self.users.insert(uid, name.clone());
         name
+    }
+}
+
+impl LinuxCollector {
+    /// User's shell history, cached until the file mtime changes.
+    fn shell_history(&mut self, user: &str) -> Vec<(Option<i64>, String)> {
+        let Some(home) = super::shellhistory::user_home(user) else {
+            return Vec::new();
+        };
+        // newest mtime across the candidate files decides cache freshness
+        let mut newest: Option<std::time::SystemTime> = None;
+        for f in [".bash_history", ".zsh_history", ".fish_history"] {
+            if let Ok(md) = std::fs::metadata(home.join(f)) {
+                let mt = md.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                newest = Some(newest.map_or(mt, |n| n.max(mt)));
+            }
+        }
+        match &self.shell_cache.get(user) {
+            Some((cached_mt, entries)) if Some(*cached_mt) == newest => return entries.clone(),
+            _ => {}
+        }
+        let entries = super::shellhistory::read_shell_histories(&home);
+        self.shell_cache.insert(
+            user.to_string(),
+            (newest.unwrap_or(std::time::SystemTime::UNIX_EPOCH), entries.clone()),
+        );
+        entries
     }
 }
 

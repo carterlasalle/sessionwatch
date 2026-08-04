@@ -7,6 +7,7 @@ pub mod btmp;
 pub mod incremental;
 pub mod journal;
 pub mod linux;
+pub mod shellhistory;
 pub mod tailscale;
 pub mod utmp;
 pub mod wtmp;
@@ -172,6 +173,11 @@ pub fn test_collector() -> Box<dyn Collector> {
                     identity: None,
                     name: None,
                     commands: Vec::new(),
+                    shell_history: vec![
+                        (Some(now - 3500), "ssh deploy@staging 'docker ps'".into()),
+                        (Some(now - 3400), "git log --oneline -20".into()),
+                        (None, "tail -f /var/log/nginx/access.log".into()),
+                    ],
                     kind: SessionKind::Ssh,
                     pid: 900,
                     login_unix: now - 3600,
@@ -184,6 +190,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                     identity: None,
                     name: None,
                     commands: Vec::new(),
+                    shell_history: Vec::new(),
                     kind: SessionKind::Local,
                     pid: 901,
                     login_unix: now - 7200,
@@ -201,6 +208,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                         (now - 18_100, "docker compose up -d".into()),
                         (now - 17_400, "tegrastats --interval 1000".into()),
                     ],
+                    shell_history: Vec::new(),
                     kind: SessionKind::Ssh,
                     pid: 904,
                     login_unix: now - 20_000,
@@ -213,6 +221,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                     identity: None,
                     name: None,
                     commands: Vec::new(),
+                    shell_history: Vec::new(),
                     kind: SessionKind::Ssh,
                     pid: 902,
                     login_unix: now - 5400,
@@ -225,6 +234,7 @@ pub fn test_collector() -> Box<dyn Collector> {
                     identity: Some("jackphelps20@gmail.com".into()),
                     name: None,
                     commands: Vec::new(),
+                    shell_history: Vec::new(),
                     kind: SessionKind::Ssh,
                     pid: 903,
                     login_unix: now - 300,

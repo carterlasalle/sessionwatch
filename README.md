@@ -72,7 +72,8 @@ timeline:
   tailnet email, tmux/screen session names survive in history, **failed login
   attempts** from `/var/log/btmp` appear as red `FAILED` rows, and pressing
   `Enter` drills into any connection to show the **timeline of commands they
-  ran** as sessionwatch observed them.
+  ran** — observed live by sessionwatch, plus the user's **shell history**
+  (bash/zsh/fish) for connections that ended before sessionwatch was watching.
 - **Follow mode** — press `f` to auto-follow the most recently active session;
   your own navigation always wins and turns follow off
 
@@ -163,8 +164,13 @@ sessionwatch --help          full option and key reference
   though Tailscale SSH never writes a normal utmp entry.
 - **Command journal**: every process sessionwatch observes spawning on a
   session's tty is appended to the journal (`P` records), so the history
-  drill-down can replay what each connection ran, in order, with timestamps —
-  no reading of `~/.bash_history` or other private files.
+  drill-down can replay what each connection ran, in order, with timestamps.
+  For connections that predate sessionwatch, the drill-down also shows the
+  user's **shell history** (`~/.bash_history` in both plain and
+  HISTTIMEFORMAT forms, `~/.zsh_history`, `~/.fish_history`), windowed to the
+  connection's lifetime when timestamps exist. Collection runs on every
+  refresh regardless of which view is on screen — history, the journal, and
+  the wtmp/btmp tailing all keep updating while you sit on the main panel.
 - **Processes**: `/proc/<pid>/stat` is decoded with the kernel `tty_nr` device
   encoding and matched against each session's terminal device, so every process
   is attributed to the tty (and user) running it. CPU% is computed from
@@ -182,6 +188,10 @@ History needs read access to `/var/log/wtmp` and `/var/log/btmp` (root or the
 `utmp` group), and Tailscale name resolution needs the `tailscale` CLI to be
 runnable (root typically). The sessionwatch journal is written to
 `/var/log/sessionwatch/` as root, else under `~/.local/state/sessionwatch/`.
+Shell-history enrichment reads `~/.bash_history` / `~/.zsh_history` /
+`~/.fish_history` — only for users that appear in the connection history, and
+only when sessionwatch has read access to their home (i.e. root). It's a
+box-owner's tool: those files stay unread for everyone else.
 
 ## License
 

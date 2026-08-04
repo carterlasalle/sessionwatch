@@ -482,7 +482,56 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
     }
     if c.commands.is_empty() {
         lines.push(Line::from(Span::styled(
-            " (no commands recorded — sessionwatch wasn't watching this session yet)",
+            " (no commands observed — sessionwatch wasn't watching this session yet)",
+            Style::default().fg(DIM),
+        )));
+    }
+
+    // retroactive shell history for connections we never observed live
+    if !c.shell_history.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                " SHELL HISTORY ",
+                Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} entries", c.shell_history.len()),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                if c.shell_history.iter().any(|(t, _)| t.is_some()) {
+                    ""
+                } else {
+                    "  (no timestamps in history file)"
+                },
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        lines.push(Line::from(""));
+        let base = c.commands.len();
+        for (i, (t, cmd)) in c.shell_history.iter().enumerate() {
+            let selected = i + base == app.detail_sel;
+            let time = match t {
+                Some(ts) => fmt_hms(*ts),
+                None => "--:--:--".to_string(),
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" {}  ", time),
+                    Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+                ),
+                Span::styled(
+                    cmd.clone(),
+                    Style::default().fg(if selected { ACCENT } else { Color::Gray })
+                        .add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+            ]));
+        }
+    }
+    if c.commands.is_empty() && c.shell_history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " (nothing recorded — no journal entry and no shell history found)",
             Style::default().fg(DIM),
         )));
     }
@@ -836,6 +885,33 @@ mod tests {
         assert!(text.contains("cargo build --release"), "command timeline missing");
         assert!(text.contains("tegrastats --interval 1000"), "later command missing");
         assert!(text.contains("connected"), "connection window missing");
+
+        // drill into the ended (wtmp-only) jackphelps connection: shell history
+        let idx2 = app
+            .snap
+            .connections
+            .iter()
+            .position(|c| c.user == "jackphelps" && c.login_unix < app.snap.taken_at - 3000)
+            .expect("ended fixture connection");
+        app.detail = Some(idx2);
+        app.detail_sel = 0;
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let text2: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text2.contains("SHELL HISTORY"), "shell history section missing");
+        assert!(
+            text2.contains("git log --oneline -20"),
+            "shell history command missing"
+        );
+        assert!(
+            text2.contains("no timestamps") || text2.contains("--:--:--"),
+            "untimed entry marker missing"
+        );
     }
 
     #[test]

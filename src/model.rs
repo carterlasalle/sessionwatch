@@ -94,6 +94,10 @@ pub struct Connection {
     /// commands observed on this connection (unix time, argv) — the
     /// reconstructed timeline of what the person ran.
     pub commands: Vec<(i64, String)>,
+    /// commands from the user's shell history files (bash/zsh/fish) —
+    /// retroactive for connections that predate sessionwatch; timestamp
+    /// present when the history file recorded one.
+    pub shell_history: Vec<(Option<i64>, String)>,
     pub kind: SessionKind,
     pub pid: u32,
     pub login_unix: i64,
