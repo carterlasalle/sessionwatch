@@ -19,6 +19,18 @@ pub fn decode_tty(tty_nr: i64) -> (u32, u32) {
     (major, minor)
 }
 
+/// Map common Linux tty device tuples directly to the utmp line name. This
+/// avoids depending on libc's `major()`/`minor()` macros when the kernel and
+/// userspace use different dev_t layouts.
+pub fn decoded_tty_path((major, minor): (u32, u32)) -> Option<String> {
+    match major {
+        136..=143 => Some(format!("pts/{}", (major - 136) * 256 + minor)),
+        4 if minor > 0 && minor < 64 => Some(format!("tty{}", minor)),
+        5 if minor == 0 => Some("tty".into()),
+        _ => None,
+    }
+}
+
 /// Normalize `/proc/<pid>/fd/{0,1,2}` targets and utmp lines to the same key.
 pub fn normalize_tty_path(path: &str) -> Option<String> {
     let path = path.strip_suffix(" (deleted)").unwrap_or(path);
@@ -30,7 +42,8 @@ pub fn normalize_tty_path(path: &str) -> Option<String> {
     }
 }
 
-/// Choose a session by a direct fd tty path first, then decoded device number.
+/// Choose a session by fd path first, then a direct decoded Linux tty path,
+/// then the rdev tuple as the final fallback.
 pub fn resolve_session_index(
     fd_tty: Option<&str>,
     decoded_dev: (u32, u32),
@@ -39,6 +52,7 @@ pub fn resolve_session_index(
 ) -> Option<usize> {
     fd_tty
         .and_then(|line| by_line.get(line).copied())
+        .or_else(|| decoded_tty_path(decoded_dev).and_then(|line| by_line.get(&line).copied()))
         .or_else(|| by_dev.get(&decoded_dev).copied())
 }
 
@@ -66,8 +80,8 @@ mod tests {
 
     #[test]
     fn decodes_pts_device_number() {
-        // new_encode_dev(MKDEV(136, 7))
         assert_eq!(decode_tty((136_i64 << 8) | 7), (136, 7));
+        assert_eq!(decoded_tty_path((136, 7)), Some("pts/7".into()));
         assert_eq!(normalize_tty_path("/dev/pts/7"), Some("pts/7".into()));
     }
 
@@ -83,8 +97,8 @@ mod tests {
 
     #[test]
     fn decoded_device_is_fallback() {
-        let by_line = HashMap::new();
-        let by_dev = HashMap::from([((136u32, 7u32), 3usize)]);
+        let by_line = HashMap::from([(String::from("pts/7"), 3usize)]);
+        let by_dev = HashMap::new();
         assert_eq!(
             resolve_session_index(None, (136, 7), &by_line, &by_dev),
             Some(3)
