@@ -59,24 +59,37 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 // ---- header ---------------------------------------------------------------
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(DIM));
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(DIM));
     let a = block.inner(area);
     f.render_widget(block, area);
 
     let title = Line::from(vec![
-        Span::styled("◉ SESSIONWATCH", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "◉ SESSIONWATCH",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" live terminal session monitor", Style::default().fg(DIM)),
         Span::styled(
             format!(" [{}]", app.collector.source()),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         ),
     ]);
     let right = Line::from(vec![
         Span::styled(
-            format!("boot {}  ", fmt_duration(app.snap.taken_at - app.snap.boot_unix)),
+            format!(
+                "boot {}  ",
+                fmt_duration(app.snap.taken_at - app.snap.boot_unix)
+            ),
             Style::default().fg(Color::Gray),
         ),
-        Span::styled(fmt_clock(app.snap.taken_at), Style::default().fg(Color::White)),
+        Span::styled(
+            fmt_clock(app.snap.taken_at),
+            Style::default().fg(Color::White),
+        ),
     ]);
     f.render_widget(Paragraph::new(two_col(title, right)), a);
 
@@ -90,21 +103,48 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     }
     let stats = Line::from(vec![
         Span::styled(
-            format!("sessions:{}  procs:{}  orphans:{}  ", app.snap.sessions.len(), app.snap.procs.len(), app.snap.orphans.len()),
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            format!(
+                "sessions:{}  procs:{}  orphans:{}  ",
+                app.snap.sessions.len(),
+                app.snap.procs.len(),
+                app.snap.orphans.len()
+            ),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("load {:.2} {:.2} {:.2}  ", app.snap.load[0], app.snap.load[1], app.snap.load[2]), Style::default().fg(Color::Gray)),
-        Span::styled(format!("{:.1}s ", app.interval.as_secs_f64()), Style::default().fg(Color::Gray)),
         Span::styled(
-            if app.follow { "FOLLOW ON" } else { "FOLLOW OFF" },
-            Style::default().fg(if app.follow { GOOD } else { WARN }).add_modifier(Modifier::BOLD),
+            format!(
+                "load {:.2} {:.2} {:.2}  ",
+                app.snap.load[0], app.snap.load[1], app.snap.load[2]
+            ),
+            Style::default().fg(Color::Gray),
+        ),
+        Span::styled(
+            format!("{:.1}s ", app.interval.as_secs_f64()),
+            Style::default().fg(Color::Gray),
+        ),
+        Span::styled(
+            if app.follow {
+                "FOLLOW ON"
+            } else {
+                "FOLLOW OFF"
+            },
+            Style::default()
+                .fg(if app.follow { GOOD } else { WARN })
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("  │ {}ssh {}local {}tmux/screen", ssh, local, tmux),
             Style::default().fg(DIM),
         ),
     ]);
-    let a2 = Rect { x: a.x, y: a.y + 1, width: a.width, height: a.height.saturating_sub(2).max(1) };
+    let a2 = Rect {
+        x: a.x,
+        y: a.y + 1,
+        width: a.width,
+        height: a.height.saturating_sub(2).max(1),
+    };
     f.render_widget(Paragraph::new(stats), a2);
 }
 
@@ -144,27 +184,56 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if focused { ACCENT } else { DIM }))
-        .title(Line::from(vec![Span::styled(" SESSIONS ", style_title(focused))]));
+        .title(Line::from(vec![Span::styled(
+            " SESSIONS ",
+            style_title(focused),
+        )]));
 
     let mut items: Vec<ListItem> = Vec::new();
     for (i, s) in app.snap.sessions.iter().enumerate() {
         let selected = i == app.selected;
-        let pulse = if selected && (app.phase / 40) % 2 == 0 { "●" } else { "○" };
-        let nprocs = app.snap.procs.iter().filter(|p| p.session_idx == Some(i)).count();
+        let pulse = if selected && (app.phase / 40) % 2 == 0 {
+            "●"
+        } else {
+            "○"
+        };
+        let nprocs = app
+            .snap
+            .procs
+            .iter()
+            .filter(|p| p.session_idx == Some(i))
+            .count();
         let ago = fmt_duration(app.snap.taken_at.saturating_sub(s.login_unix));
         let sp = sparkline(&app.history[i], 20);
 
         let head = Line::from(vec![
-            Span::styled(pulse, Style::default().fg(if selected { GOOD } else { DIM })),
+            Span::styled(
+                pulse,
+                Style::default().fg(if selected { GOOD } else { DIM }),
+            ),
             Span::raw(" "),
-            Span::styled(&s.user, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &s.user,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("@", Style::default().fg(DIM)),
             Span::styled(
                 s.identity.as_deref().unwrap_or(&s.host),
-                Style::default().fg(if s.identity.is_some() { Color::Magenta } else { Color::Gray }),
+                Style::default().fg(if s.identity.is_some() {
+                    Color::Magenta
+                } else {
+                    Color::Gray
+                }),
             ),
             Span::raw(" "),
-            Span::styled(format!("[{}]", s.kind.label()), Style::default().fg(kind_color(s.kind)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("[{}]", s.kind.label()),
+                Style::default()
+                    .fg(kind_color(s.kind))
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         // session name chip (tmux/screen/zellij session names)
@@ -175,9 +244,15 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Color::DarkGray
             };
-            name_line.spans.splice(7..7, vec![
-                Span::styled(format!("«{}»", name), Style::default().fg(nstyle).add_modifier(Modifier::BOLD | Modifier::ITALIC)),
-            ]);
+            name_line.spans.splice(
+                7..7,
+                vec![Span::styled(
+                    format!("«{}»", name),
+                    Style::default()
+                        .fg(nstyle)
+                        .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+                )],
+            );
         }
 
         let detail = Line::from(vec![
@@ -186,21 +261,38 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(" · up ", Style::default().fg(DIM)),
             Span::styled(ago, Style::default().fg(Color::Gray)),
             Span::styled(" · ", Style::default().fg(DIM)),
-            Span::styled(format!("{} proc", nprocs), Style::default().fg(if selected { GOOD } else { Color::Gray })),
+            Span::styled(
+                format!("{} proc", nprocs),
+                Style::default().fg(if selected { GOOD } else { Color::Gray }),
+            ),
             Span::styled(" · pid ", Style::default().fg(DIM)),
             Span::styled(s.pid.to_string(), Style::default().fg(DIM)),
             Span::styled("  ", Style::default()),
-            Span::styled(sp, Style::default().fg(if selected { kind_color(s.kind) } else { Color::DarkGray })),
+            Span::styled(
+                sp,
+                Style::default().fg(if selected {
+                    kind_color(s.kind)
+                } else {
+                    Color::DarkGray
+                }),
+            ),
         ]);
 
         items.push(ListItem::new(vec![name_line, detail]));
     }
     if items.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled("no login sessions", Style::default().fg(DIM)))));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "no login sessions",
+            Style::default().fg(DIM),
+        ))));
     }
 
     let mut state = ListState::default();
-    state.select(if app.snap.sessions.is_empty() { None } else { Some(app.selected) });
+    state.select(if app.snap.sessions.is_empty() {
+        None
+    } else {
+        Some(app.selected)
+    });
 
     let list = List::new(items)
         .block(block)
@@ -235,7 +327,11 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .filter(|p| p.session_idx == Some(app.selected))
         .collect();
-    procs.sort_by(|a, b| b.start_unix.partial_cmp(&a.start_unix).unwrap_or(std::cmp::Ordering::Equal));
+    procs.sort_by(|a, b| {
+        b.start_unix
+            .partial_cmp(&a.start_unix)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let header = Row::new(vec![
         Cell::from("PID"),
@@ -246,7 +342,11 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
         Cell::from("S"),
         Cell::from("COMMAND"),
     ])
-    .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    .style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut rows: Vec<Row> = Vec::new();
     let newest_cmd: Option<u32> = procs.first().map(|p| p.pid);
@@ -260,7 +360,13 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
             'T' => WARN,
             _ => Color::Gray,
         };
-        let cpu_style = Style::default().fg(if p.cpu_pct > 50.0 { BAD } else if p.cpu_pct > 15.0 { WARN } else { Color::Gray });
+        let cpu_style = Style::default().fg(if p.cpu_pct > 50.0 {
+            BAD
+        } else if p.cpu_pct > 15.0 {
+            WARN
+        } else {
+            Color::Gray
+        });
         let cmd_style = if is_newest {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
@@ -272,26 +378,36 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
             Cell::from(cpu_fmt(p.cpu_pct)).style(cpu_style),
             Cell::from(fmt_rss(p.rss_kb)).style(Style::default().fg(Color::Gray)),
             Cell::from(fmt_elapsed(p.elapsed)).style(Style::default().fg(Color::Gray)),
-            Cell::from(p.state.to_string()).style(Style::default().fg(state_color).add_modifier(Modifier::BOLD)),
+            Cell::from(p.state.to_string()).style(
+                Style::default()
+                    .fg(state_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Cell::from(p.cmdline.clone()).style(cmd_style),
         ]));
     }
     if rows.is_empty() {
-        rows.push(Row::new(vec![Cell::from("(no processes on this terminal)").style(Style::default().fg(DIM))]));
+        rows.push(Row::new(vec![Cell::from(
+            "(no processes on this terminal)",
+        )
+        .style(Style::default().fg(DIM))]));
     }
 
     let mut state = TableState::default();
     state.select(Some(app.proc_sel.min(procs.len().saturating_sub(1))));
 
-    let table = Table::new(rows, [
-        Constraint::Length(7),
-        Constraint::Length(10),
-        Constraint::Length(6),
-        Constraint::Length(7),
-        Constraint::Length(8),
-        Constraint::Length(2),
-        Constraint::Min(12),
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(7),
+            Constraint::Length(10),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(2),
+            Constraint::Min(12),
+        ],
+    )
     .column_spacing(0)
     .header(header)
     .block(block)
@@ -329,7 +445,11 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
         Cell::from("LOGIN"),
         Cell::from("DURATION"),
     ])
-    .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    .style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let now = app.snap.taken_at;
     let mut table_rows: Vec<Row> = Vec::new();
@@ -343,24 +463,39 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
                 let from_style = if live {
                     Style::default().fg(Color::Cyan)
                 } else {
-                    Style::default().fg(if c.identity.is_some() || c.kind == SessionKind::Ssh { Color::Cyan } else { Color::DarkGray })
+                    Style::default().fg(if c.identity.is_some() || c.kind == SessionKind::Ssh {
+                        Color::Cyan
+                    } else {
+                        Color::DarkGray
+                    })
                 };
                 let session_span = match &c.name {
                     Some(n) => Span::styled(
                         format!("«{}»", n),
-                        Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::ITALIC),
                     ),
                     None => Span::raw(""),
                 };
                 let duration = if live {
-                    Span::styled("live", Style::default().fg(GOOD).add_modifier(Modifier::BOLD))
+                    Span::styled(
+                        "live",
+                        Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+                    )
                 } else {
-                    let secs = c.logout_unix.unwrap_or(now).saturating_sub(c.login_unix).max(0);
+                    let secs = c
+                        .logout_unix
+                        .unwrap_or(now)
+                        .saturating_sub(c.login_unix)
+                        .max(0);
                     Span::styled(fmt_duration(secs), Style::default().fg(Color::Gray))
                 };
                 table_rows.push(Row::new(vec![
                     Cell::from(format!("{}{}", marker, c.user)).style(if live {
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::Gray)
                     }),
@@ -377,25 +512,32 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
                     Cell::from(f.host.clone()).style(Style::default().fg(BAD)),
                     Cell::from(f.line.clone()).style(Style::default().fg(Color::DarkGray)),
                     Cell::from(fmt_hms(f.at)).style(Style::default().fg(Color::DarkGray)),
-                    Cell::from("FAILED").style(Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
+                    Cell::from("FAILED")
+                        .style(Style::default().fg(BAD).add_modifier(Modifier::BOLD)),
                 ]));
             }
         }
     }
     if table_rows.is_empty() {
-        table_rows.push(Row::new(vec![Cell::from("(no history — /var/log/wtmp and /var/log/btmp empty or unreadable)").style(Style::default().fg(DIM))]));
+        table_rows.push(Row::new(vec![Cell::from(
+            "(no history — /var/log/wtmp and /var/log/btmp empty or unreadable)",
+        )
+        .style(Style::default().fg(DIM))]));
     }
 
     let mut state = TableState::default();
     state.select(Some(app.conn_sel.min(table_rows.len().saturating_sub(1))));
 
-    let table = Table::new(table_rows, [
-        Constraint::Length(9),
-        Constraint::Length(24),
-        Constraint::Length(12),
-        Constraint::Length(9),
-        Constraint::Length(10),
-    ])
+    let table = Table::new(
+        table_rows,
+        [
+            Constraint::Length(9),
+            Constraint::Length(24),
+            Constraint::Length(12),
+            Constraint::Length(9),
+            Constraint::Length(10),
+        ],
+    )
     .column_spacing(0)
     .header(header)
     .block(block)
@@ -410,7 +552,9 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::History;
     let border = if focused { ACCENT } else { DIM };
     let Some(idx) = app.detail else { return };
-    let Some(c) = app.snap.connections.get(idx) else { return };
+    let Some(c) = app.snap.connections.get(idx) else {
+        return;
+    };
 
     let who = c.identity.as_deref().unwrap_or(&c.host);
     let block = Block::default()
@@ -418,23 +562,45 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(border))
         .title(Line::from(vec![
             Span::styled(" SESSION DETAIL ", style_title(focused)),
-            Span::styled(format!("{}@{}  {}  ", c.user, who, c.line), Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{}@{}  {}  ", c.user, who, c.line),
+                Style::default().fg(Color::Gray),
+            ),
         ]));
 
     let mut lines: Vec<Line> = Vec::new();
     let meta1 = Line::from(vec![
-        Span::styled(&c.user, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            &c.user,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("@", Style::default().fg(DIM)),
-        Span::styled(who, Style::default().fg(if c.identity.is_some() { Color::Magenta } else { Color::Cyan })),
+        Span::styled(
+            who,
+            Style::default().fg(if c.identity.is_some() {
+                Color::Magenta
+            } else {
+                Color::Cyan
+            }),
+        ),
         Span::styled("  ", Style::default()),
-        Span::styled(format!("[{}]", c.kind.label()), Style::default().fg(kind_color(c.kind)).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("[{}]", c.kind.label()),
+            Style::default()
+                .fg(kind_color(c.kind))
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("  ·  ", Style::default().fg(DIM)),
         Span::styled("pid ", Style::default().fg(DIM)),
         Span::styled(c.pid.to_string(), Style::default().fg(Color::Gray)),
         match &c.name {
             Some(n) => Span::styled(
                 format!("  «{}»", n),
-                Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::ITALIC),
             ),
             None => Span::raw(""),
         },
@@ -462,8 +628,14 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
     lines.push(meta2);
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(" COMMANDS (as observed live) ", Style::default().fg(DIM).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("{} recorded", c.commands.len()), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            " COMMANDS (as observed live) ",
+            Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{} recorded", c.commands.len()),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]));
     lines.push(Line::from(""));
     for (i, (t, cmd)) in c.commands.iter().enumerate() {
@@ -471,12 +643,21 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(vec![
             Span::styled(
                 format!(" {}  ", fmt_hms(*t)),
-                Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+                Style::default().fg(if selected {
+                    Color::White
+                } else {
+                    Color::DarkGray
+                }),
             ),
             Span::styled(
                 cmd.clone(),
-                Style::default().fg(if selected { ACCENT } else { Color::White })
-                    .add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }),
+                Style::default()
+                    .fg(if selected { ACCENT } else { Color::White })
+                    .add_modifier(if selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             ),
         ]));
     }
@@ -519,12 +700,21 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {}  ", time),
-                    Style::default().fg(if selected { Color::White } else { Color::DarkGray }),
+                    Style::default().fg(if selected {
+                        Color::White
+                    } else {
+                        Color::DarkGray
+                    }),
                 ),
                 Span::styled(
                     cmd.clone(),
-                    Style::default().fg(if selected { ACCENT } else { Color::Gray })
-                        .add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() }),
+                    Style::default()
+                        .fg(if selected { ACCENT } else { Color::Gray })
+                        .add_modifier(if selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ),
             ]));
         }
@@ -548,7 +738,10 @@ fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DIM))
-        .title(Line::from(vec![Span::styled(" LIVE ACTIVITY ", style_title(false))]));
+        .title(Line::from(vec![Span::styled(
+            " LIVE ACTIVITY ",
+            style_title(false),
+        )]));
 
     let max_rows = block.inner(area).height as usize;
     let mut lines: Vec<Line> = Vec::new();
@@ -560,7 +753,10 @@ fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
             _ => INFO,
         };
         lines.push(Line::from(vec![
-            Span::styled(format!("[{:>5}]", e.kind.to_uppercase()), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("[{:>5}]", e.kind.to_uppercase()),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" "),
             Span::styled(&e.user, Style::default().fg(Color::Cyan)),
             Span::styled(format!("@{}", e.session_line), Style::default().fg(DIM)),
@@ -570,7 +766,10 @@ fn draw_ticker(f: &mut Frame, area: Rect, app: &App) {
         ]));
     }
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled("no activity observed yet", Style::default().fg(DIM))));
+        lines.push(Line::from(Span::styled(
+            "no activity observed yet",
+            Style::default().fg(DIM),
+        )));
     }
     // Keep newest at the bottom; trim from the top.
     if lines.len() > max_rows {
@@ -596,7 +795,13 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         }
     };
     let line = Line::from(vec![
-        Span::styled(" sessionwatch ", Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " sessionwatch ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(format!("  {}", hints), Style::default().fg(Color::Gray)),
     ]);
     f.render_widget(Paragraph::new(line), area);
@@ -609,28 +814,51 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let h = 24.min(area.height.saturating_sub(2)).max(12);
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
-    let box_area = Rect { x, y, width: w, height: h };
+    let box_area = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
-        .title(Line::from(vec![Span::styled(" KEYS ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))]))
+        .title(Line::from(vec![Span::styled(
+            " KEYS ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )]))
         .title_alignment(Alignment::Center)
         .style(Style::default().bg(Color::from_u32(0x12121c)));
 
     let rows = [
-        ("1 / 2 / 3", "switch views: sessions / live processes / connection history"),
+        (
+            "1 / 2 / 3",
+            "switch views: sessions / live processes / connection history",
+        ),
         ("↑/↓ / j/k", "move selection (in focused panel)"),
-        ("← / → / Tab", "switch focus between sessions and the right panel"),
-        ("Enter", "in HISTORY: drill into a connection's command timeline"),
+        (
+            "← / → / Tab",
+            "switch focus between sessions and the right panel",
+        ),
+        (
+            "Enter",
+            "in HISTORY: drill into a connection's command timeline",
+        ),
         ("Esc", "back from the session detail view"),
-        ("f", "toggle FOLLOW — auto-follow the most recently active session"),
+        (
+            "f",
+            "toggle FOLLOW — auto-follow the most recently active session",
+        ),
         ("space / r", "refresh snapshot immediately"),
         ("+ / -", "speed up / slow down auto-refresh"),
         ("h / ?", "this help"),
         ("q / Ctrl-C", "quit"),
     ];
-    let mut lines = vec![Line::from(Span::styled("  What am I looking at?", Style::default().fg(DIM).add_modifier(Modifier::BOLD)))];
+    let mut lines = vec![Line::from(Span::styled(
+        "  What am I looking at?",
+        Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+    ))];
     lines.push(Line::from(Span::styled(
         "  SESSIONS: every logged-in terminal (ssh/local/tmux/screen); the",
         Style::default().fg(Color::Gray),
@@ -666,7 +894,10 @@ fn draw_help(f: &mut Frame, area: Rect) {
     lines.push(Line::from(""));
     for (k, d) in rows {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<18}", k), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("  {:<18}", k),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(d, Style::default().fg(Color::White)),
         ]));
     }
@@ -730,7 +961,11 @@ fn fmt_clock(unix: i64) -> String {
     }
     format!(
         "{:02}:{:02}:{:02}  {:02}-{:02}",
-        tm.tm_hour, tm.tm_min, tm.tm_sec, tm.tm_mon + 1, tm.tm_mday
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+        tm.tm_mon + 1,
+        tm.tm_mday
     )
 }
 
@@ -844,8 +1079,14 @@ mod tests {
         assert!(text.contains("2 live"), "live count missing");
         assert!(text.contains("2 failed"), "failed count missing");
         // tailscale identity email and session name from the journal
-        assert!(text.contains("jackphelps20@gmail.com"), "tailscale identity missing");
-        assert!(text.contains("«cursor-env»"), "journal session name missing");
+        assert!(
+            text.contains("jackphelps20@gmail.com"),
+            "tailscale identity missing"
+        );
+        assert!(
+            text.contains("«cursor-env»"),
+            "journal session name missing"
+        );
         // a past connection with a duration
         assert!(text.contains("10.20.30.5"), "from-host missing");
         assert!(text.contains("live"), "live marker missing");
@@ -881,9 +1122,18 @@ mod tests {
             .collect();
         std::fs::write("target/ui-detail-snapshot.txt", &text).ok();
         assert!(text.contains("SESSION DETAIL"), "detail panel missing");
-        assert!(text.contains("jackphelps20@gmail.com"), "identity missing in detail");
-        assert!(text.contains("cargo build --release"), "command timeline missing");
-        assert!(text.contains("tegrastats --interval 1000"), "later command missing");
+        assert!(
+            text.contains("jackphelps20@gmail.com"),
+            "identity missing in detail"
+        );
+        assert!(
+            text.contains("cargo build --release"),
+            "command timeline missing"
+        );
+        assert!(
+            text.contains("tegrastats --interval 1000"),
+            "later command missing"
+        );
         assert!(text.contains("connected"), "connection window missing");
 
         // drill into the ended (wtmp-only) jackphelps connection: shell history
@@ -903,7 +1153,10 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text2.contains("SHELL HISTORY"), "shell history section missing");
+        assert!(
+            text2.contains("SHELL HISTORY"),
+            "shell history section missing"
+        );
         assert!(
             text2.contains("git log --oneline -20"),
             "shell history command missing"

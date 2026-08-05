@@ -91,13 +91,24 @@ impl Journal {
                     let mut toks = line.split_whitespace();
                     match toks.next() {
                         Some("O") => {
-                            let Some(login) = toks.next().and_then(|t| t.parse::<i64>().ok()) else { continue };
+                            let Some(login) = toks.next().and_then(|t| t.parse::<i64>().ok())
+                            else {
+                                continue;
+                            };
                             let Some(user) = toks.next() else { continue };
                             let Some(host) = toks.next() else { continue };
                             let Some(line_s) = toks.next() else { continue };
-                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else { continue };
-                            let Some(identity) = toks.next() else { continue };
-                            let identity = if identity == "-" { None } else { Some(identity.to_string()) };
+                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else {
+                                continue;
+                            };
+                            let Some(identity) = toks.next() else {
+                                continue;
+                            };
+                            let identity = if identity == "-" {
+                                None
+                            } else {
+                                Some(identity.to_string())
+                            };
                             let name: String = toks.collect::<Vec<_>>().join(" ");
                             let name = if name.is_empty() { None } else { Some(name) };
                             open.insert(
@@ -118,9 +129,13 @@ impl Journal {
                             );
                         }
                         Some("P") => {
-                            let Some(t) = toks.next().and_then(|t| t.parse::<i64>().ok()) else { continue };
+                            let Some(t) = toks.next().and_then(|t| t.parse::<i64>().ok()) else {
+                                continue;
+                            };
                             let Some(line_s) = toks.next() else { continue };
-                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else { continue };
+                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else {
+                                continue;
+                            };
                             let cmd: String = toks.collect::<Vec<_>>().join(" ");
                             if let Some(c) = open.get_mut(&(pid, line_s.to_string())) {
                                 c.commands.push((t, cmd));
@@ -130,9 +145,13 @@ impl Journal {
                             }
                         }
                         Some("C") => {
-                            let Some(t) = toks.next().and_then(|t| t.parse::<i64>().ok()) else { continue };
+                            let Some(t) = toks.next().and_then(|t| t.parse::<i64>().ok()) else {
+                                continue;
+                            };
                             let Some(line_s) = toks.next() else { continue };
-                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else { continue };
+                            let Some(pid) = toks.next().and_then(|t| t.parse::<u32>().ok()) else {
+                                continue;
+                            };
                             if let Some(mut c) = open.remove(&(pid, line_s.to_string())) {
                                 c.logout_unix = Some(t);
                                 conns.push(c);
@@ -181,7 +200,10 @@ impl Journal {
                     sanitize(&s.host),
                     sanitize(&s.line),
                     s.pid,
-                    s.identity.as_deref().map(sanitize).unwrap_or_else(|| "-".to_string()),
+                    s.identity
+                        .as_deref()
+                        .map(sanitize)
+                        .unwrap_or_else(|| "-".to_string()),
                     s.name.as_deref().map(sanitize_line).unwrap_or_default()
                 );
                 self.append(&rec);
@@ -194,7 +216,7 @@ impl Journal {
                         identity: s.identity.clone(),
                         name: s.name.clone(),
                         commands: Vec::new(),
-                    shell_history: Vec::new(),
+                        shell_history: Vec::new(),
                         kind: s.kind,
                         pid: s.pid,
                         login_unix: s.login_unix,
@@ -222,7 +244,13 @@ impl Journal {
             if c.commands.len() > MAX_CMDS {
                 c.commands.drain(0..c.commands.len() - MAX_CMDS);
             }
-            let rec = format!("P {} {} {} {}\n", at, sanitize(line), sess_pid, sanitize_line(cmdline));
+            let rec = format!(
+                "P {} {} {} {}\n",
+                at,
+                sanitize(line),
+                sess_pid,
+                sanitize_line(cmdline)
+            );
             self.append(&rec);
         }
     }
@@ -231,7 +259,11 @@ impl Journal {
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&self.path) {
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
             let _ = f.write_all(rec.as_bytes());
         }
     }
@@ -256,7 +288,13 @@ impl Default for Journal {
 
 fn sanitize(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_whitespace() || c == '\n' || c == '\r' { '_' } else { c })
+        .map(|c| {
+            if c.is_whitespace() || c == '\n' || c == '\r' {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -433,13 +471,22 @@ mod tests {
             logout_unix: Some(2000),
         }];
         let journal = vec![conn(
-            "dev", "pts/3", "jackphelps-mbp", 777, login, Some("jackphelps20@gmail.com"),
-            Some("cursor-env"), vec![(1500, "vim x".into())],
+            "dev",
+            "pts/3",
+            "jackphelps-mbp",
+            777,
+            login,
+            Some("jackphelps20@gmail.com"),
+            Some("cursor-env"),
+            vec![(1500, "vim x".into())],
         )];
         let merged = merge_connections(wtmp, journal);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].name.as_deref(), Some("cursor-env"));
-        assert_eq!(merged[0].identity.as_deref(), Some("jackphelps20@gmail.com"));
+        assert_eq!(
+            merged[0].identity.as_deref(),
+            Some("jackphelps20@gmail.com")
+        );
         assert_eq!(merged[0].host, "jackphelps-mbp");
         assert_eq!(merged[0].commands.len(), 1);
         assert_eq!(merged[0].logout_unix, Some(2000)); // wtmp's exact logout wins
@@ -448,7 +495,16 @@ mod tests {
     #[test]
     fn merge_keeps_journal_only_connections() {
         let login = 1000;
-        let journal = vec![conn("ops", "pts/4", "localhost", 42, login, None, None, Vec::new())];
+        let journal = vec![conn(
+            "ops",
+            "pts/4",
+            "localhost",
+            42,
+            login,
+            None,
+            None,
+            Vec::new(),
+        )];
         let merged = merge_connections(Vec::new(), journal);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].user, "ops");

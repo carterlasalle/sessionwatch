@@ -40,7 +40,11 @@ pub fn parse_utmp(bytes: &[u8]) -> Vec<Session> {
         }
         let line = cstr(rec, 8, 32);
         let host = cstr(rec, 76, 256);
-        let host = if host.is_empty() { "localhost".to_string() } else { host };
+        let host = if host.is_empty() {
+            "localhost".to_string()
+        } else {
+            host
+        };
         let tv_sec = i64::from_le_bytes(rec[344..352].try_into().unwrap());
         let device = if line.starts_with('/') {
             line.clone()
@@ -64,7 +68,9 @@ pub fn parse_utmp(bytes: &[u8]) -> Vec<Session> {
 
 /// Read and parse the system utmp file (empty vec when absent/unreadable).
 pub fn read_utmp_file() -> Vec<Session> {
-    std::fs::read(UTMP_PATH).map(|b| parse_utmp(&b)).unwrap_or_default()
+    std::fs::read(UTMP_PATH)
+        .map(|b| parse_utmp(&b))
+        .unwrap_or_default()
 }
 
 /// Read a NUL-terminated string field out of a record.
@@ -96,7 +102,14 @@ mod tests {
 
     #[test]
     fn parses_user_process_records() {
-        let alice = rec(USER_PROCESS, "pts/3", "alice", "10.0.0.5", 1_700_000_000, 1234);
+        let alice = rec(
+            USER_PROCESS,
+            "pts/3",
+            "alice",
+            "10.0.0.5",
+            1_700_000_000,
+            1234,
+        );
         let bob = rec(USER_PROCESS, "tty1", "bob", "", 1_700_000_100, 5678);
         let sessions = parse_utmp(&[alice, bob].concat());
         assert_eq!(sessions.len(), 2);

@@ -42,7 +42,11 @@ pub fn parse_wtmp(bytes: &[u8]) -> Vec<Connection> {
                     continue;
                 }
                 let host = cstr(rec, 76, 256);
-                let host = if host.is_empty() { "localhost".to_string() } else { host };
+                let host = if host.is_empty() {
+                    "localhost".to_string()
+                } else {
+                    host
+                };
                 let pid = u32::from_le_bytes(rec[4..8].try_into().unwrap());
                 let kind = if host == "localhost" || host.starts_with(':') {
                     SessionKind::Local
@@ -60,7 +64,7 @@ pub fn parse_wtmp(bytes: &[u8]) -> Vec<Connection> {
                         identity: None,
                         name: None,
                         commands: Vec::new(),
-                    shell_history: Vec::new(),
+                        shell_history: Vec::new(),
                         kind,
                         pid,
                         login_unix: tv_sec,
@@ -133,8 +137,11 @@ impl WtmpReader {
             // stale dedupe keys beyond the cap can accumulate; prune once in a while
             if self.seen.len() > MAX_CONNECTIONS * 4 {
                 self.seen.clear();
-                self.seen
-                    .extend(self.conns.iter().map(|c| (c.pid, c.login_unix, c.line.clone())));
+                self.seen.extend(
+                    self.conns
+                        .iter()
+                        .map(|c| (c.pid, c.login_unix, c.line.clone())),
+                );
             }
         }
         self.conns.clone()

@@ -30,7 +30,11 @@ pub fn parse_btmp(bytes: &[u8]) -> Vec<FailedLogin> {
             continue;
         }
         let host = cstr(rec, 76, 256);
-        let host = if host.is_empty() { "localhost".to_string() } else { host };
+        let host = if host.is_empty() {
+            "localhost".to_string()
+        } else {
+            host
+        };
         let line = cstr(rec, 8, 32);
         let at = i64::from_le_bytes(rec[344..352].try_into().unwrap());
         out.push(FailedLogin {

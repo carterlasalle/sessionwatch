@@ -92,12 +92,17 @@ pub fn read_shell_histories(home: &Path) -> Vec<(Option<i64>, String)> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     let candidates = [
-        (home.join(".bash_history"), parse_bash_history as fn(&str) -> Vec<(Option<i64>, String)>),
+        (
+            home.join(".bash_history"),
+            parse_bash_history as fn(&str) -> Vec<(Option<i64>, String)>,
+        ),
         (home.join(".zsh_history"), parse_zsh_history),
         (home.join(".fish_history"), parse_fish_history),
     ];
     for (path, parser) in candidates {
-        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
         if text.len() > 2 * 1024 * 1024 {
             continue; // don't slurp absurd files
         }

@@ -92,10 +92,17 @@ impl TailscaleMap {
         if !is_cgnat(host) {
             return host.to_string();
         }
-        if self.last_lookup.map(|t| t.elapsed() > self.ttl).unwrap_or(true) {
+        if self
+            .last_lookup
+            .map(|t| t.elapsed() > self.ttl)
+            .unwrap_or(true)
+        {
             self.refresh();
         }
-        self.map.get(host).cloned().unwrap_or_else(|| host.to_string())
+        self.map
+            .get(host)
+            .cloned()
+            .unwrap_or_else(|| host.to_string())
     }
 
     fn refresh(&mut self) {
@@ -136,9 +143,15 @@ mod tests {
 -  (no node)
 ";
         let map = parse_tailscale_status(text);
-        assert_eq!(map.get("100.64.0.5").map(|s| s.as_str()), Some("jackphelps-mbp"));
+        assert_eq!(
+            map.get("100.64.0.5").map(|s| s.as_str()),
+            Some("jackphelps-mbp")
+        );
         assert_eq!(map.get("100.64.0.6").map(|s| s.as_str()), Some("jetson"));
-        assert_eq!(map.get("100.101.102.103").map(|s| s.as_str()), Some("bastion"));
+        assert_eq!(
+            map.get("100.101.102.103").map(|s| s.as_str()),
+            Some("bastion")
+        );
         assert_eq!(map.len(), 3);
     }
 

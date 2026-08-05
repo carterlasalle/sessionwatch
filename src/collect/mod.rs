@@ -9,15 +9,16 @@ pub mod journal;
 pub mod linux;
 pub mod shellhistory;
 pub mod tailscale;
+pub mod tty;
 pub mod utmp;
 pub mod wtmp;
 
 #[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::model::Snapshot;
 #[cfg(test)]
 use crate::model::{Connection, FailedLogin, Proc, Session, SessionKind};
-use crate::model::Snapshot;
 
 /// Produces a [`Snapshot`] on demand. Implementations keep whatever state they
 /// need to compute deltas (e.g. per-pid CPU ticks).
@@ -80,7 +81,16 @@ pub(crate) fn session_name_from_cmdlines<'a>(
             let sub = toks
                 .iter()
                 .position(|t| {
-                    matches!(*t, "new" | "new-session" | "attach" | "attach-session" | "a" | "switch" | "switch-client")
+                    matches!(
+                        *t,
+                        "new"
+                            | "new-session"
+                            | "attach"
+                            | "attach-session"
+                            | "a"
+                            | "switch"
+                            | "switch-client"
+                    )
                 })
                 .and_then(|p| toks.get(p + 1).copied());
             if let Some(rest) = sub {
@@ -119,7 +129,13 @@ pub fn test_collector() -> Box<dyn Collector> {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            let mk = |user: &str, host: &str, line: &str, kind: SessionKind, name: Option<&str>, pid: u32, login_ago: i64| Session {
+            let mk = |user: &str,
+                      host: &str,
+                      line: &str,
+                      kind: SessionKind,
+                      name: Option<&str>,
+                      pid: u32,
+                      login_ago: i64| Session {
                 user: user.into(),
                 line: line.into(),
                 device: format!("/dev/{line}"),
@@ -131,11 +147,51 @@ pub fn test_collector() -> Box<dyn Collector> {
                 pid,
             };
             let sessions = vec![
-                mk("jackphelps", "10.20.30.5", "pts/0", SessionKind::Ssh, None, 900, 600),
-                mk("alice", "localhost", "pts/1", SessionKind::Local, None, 901, 1500),
-                mk("carol", "172.16.8.12", "pts/2", SessionKind::Ssh, None, 902, 2400),
-                mk("dev", "localhost", "pts/3", SessionKind::Tmux, Some("cursor-env"), 903, 3300),
-                mk("ops", "localhost", "pts/4", SessionKind::Screen, Some("deploy-prod"), 904, 4200),
+                mk(
+                    "jackphelps",
+                    "10.20.30.5",
+                    "pts/0",
+                    SessionKind::Ssh,
+                    None,
+                    900,
+                    600,
+                ),
+                mk(
+                    "alice",
+                    "localhost",
+                    "pts/1",
+                    SessionKind::Local,
+                    None,
+                    901,
+                    1500,
+                ),
+                mk(
+                    "carol",
+                    "172.16.8.12",
+                    "pts/2",
+                    SessionKind::Ssh,
+                    None,
+                    902,
+                    2400,
+                ),
+                mk(
+                    "dev",
+                    "localhost",
+                    "pts/3",
+                    SessionKind::Tmux,
+                    Some("cursor-env"),
+                    903,
+                    3300,
+                ),
+                mk(
+                    "ops",
+                    "localhost",
+                    "pts/4",
+                    SessionKind::Screen,
+                    Some("deploy-prod"),
+                    904,
+                    4200,
+                ),
             ];
             let mut procs = Vec::new();
             let mut n = 1000;
@@ -276,7 +332,12 @@ mod tests {
 
     #[test]
     fn tmux_new_and_attach() {
-        let cmds = ["tmux new -s cursor-env", "tmux attach -t work:1.3", "tmux -2 attach-session -t jira", "tmux ls"];
+        let cmds = [
+            "tmux new -s cursor-env",
+            "tmux attach -t work:1.3",
+            "tmux -2 attach-session -t jira",
+            "tmux ls",
+        ];
         assert_eq!(
             session_name_from_cmdlines(cmds.iter().copied()),
             Some("cursor-env".to_string())

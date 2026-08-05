@@ -121,10 +121,10 @@ impl App {
             if self.follow {
                 self.selected = self.most_active();
             }
-            self.proc_sel = self
-                .proc_sel
-                .min(self.session_proc_len().saturating_sub(1));
-            self.conn_sel = self.conn_sel.min(self.snap.connections.len().saturating_sub(1));
+            self.proc_sel = self.proc_sel.min(self.session_proc_len().saturating_sub(1));
+            self.conn_sel = self
+                .conn_sel
+                .min(self.snap.connections.len().saturating_sub(1));
             if let Some(d) = self.detail {
                 let n = self
                     .snap
@@ -359,7 +359,8 @@ impl App {
                             .get(d)
                             .map(|c| c.commands.len() + c.shell_history.len())
                             .unwrap_or(0);
-                        self.detail_sel = self.detail_sel.saturating_add(1).min(n.saturating_sub(1));
+                        self.detail_sel =
+                            self.detail_sel.saturating_add(1).min(n.saturating_sub(1));
                     }
                     return Ok(());
                 }
@@ -411,7 +412,9 @@ impl App {
                     self.detail = None;
                 } else if self.view == View::History {
                     // drill into the selected row if it's a connection
-                    if let Some((_, HistoryItem::Conn(idx))) = self.history_rows().get(self.conn_sel) {
+                    if let Some((_, HistoryItem::Conn(idx))) =
+                        self.history_rows().get(self.conn_sel)
+                    {
                         self.detail = Some(*idx);
                         self.detail_sel = 0;
                         self.view = View::Detail;
@@ -431,9 +434,8 @@ impl App {
                 Ok(())
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.interval = Duration::from_millis(
-                    (self.interval.as_millis() as u64 + 500).min(30_000),
-                );
+                self.interval =
+                    Duration::from_millis((self.interval.as_millis() as u64 + 500).min(30_000));
                 Ok(())
             }
             KeyCode::Char('-') | KeyCode::Char('_') => {
@@ -452,7 +454,11 @@ impl App {
     }
 
     fn session_proc_len(&self) -> usize {
-        self.snap.procs.iter().filter(|p| p.session_idx == Some(self.selected)).count()
+        self.snap
+            .procs
+            .iter()
+            .filter(|p| p.session_idx == Some(self.selected))
+            .count()
     }
 }
 

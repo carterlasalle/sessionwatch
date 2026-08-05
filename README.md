@@ -171,10 +171,11 @@ sessionwatch --help          full option and key reference
   connection's lifetime when timestamps exist. Collection runs on every
   refresh regardless of which view is on screen — history, the journal, and
   the wtmp/btmp tailing all keep updating while you sit on the main panel.
-- **Processes**: `/proc/<pid>/stat` is decoded with the kernel `tty_nr` device
-  encoding and matched against each session's terminal device, so every process
-  is attributed to the tty (and user) running it. CPU% is computed from
-  utime/stime deltas between polls.
+- **Processes**: each process is attributed to a session by matching its
+  `/proc/<pid>/fd/0`, `/fd/1`, or `/fd/2` tty path to the session's `pts/N`
+  line first, with kernel `tty_nr` device decoding as fallback. This avoids
+  libc/container device-number mismatches that can otherwise make every
+  process look like an orphan. CPU% is computed from utime/stime deltas.
 - **Session names**: tmux/zellij/screen session names are parsed from the
   client processes' argv on each tty (`-s`/`-t`/`-S` flags, `zellij attach <n>`).
 - **Events**: each refresh diffs the process set and emits spawn/exit events.

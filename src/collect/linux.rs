@@ -13,6 +13,7 @@ use crate::model::{FailedLogin, Proc, Session, SessionKind, Snapshot};
 use super::btmp::BtmpReader;
 use super::journal::{merge_connections, Journal};
 use super::tailscale::TailscaleMap;
+use super::tty::{decode_tty, normalize_tty_path, read_process_tty, resolve_session_index};
 use super::utmp;
 use super::wtmp::WtmpReader;
 use super::Collector;
@@ -77,7 +78,16 @@ impl Collector for LinuxCollector {
         let boot_unix = (now_unix as f64 - uptime).round() as i64;
 
         let mut sessions = read_sessions();
-        // Resolve each session's device to a (major, minor) for tty matching.
+        // Resolve sessions by their canonical line name. This is the primary
+        // key because /proc fd symlinks and utmp both expose `pts/N` directly.
+        // Device-number matching remains a fallback for processes whose fd
+        // 0/1/2 are redirected.
+        let mut idx_by_line: HashMap<String, usize> = HashMap::new();
+        for (i, s) in sessions.iter().enumerate() {
+            if let Some(line) = normalize_tty_path(&s.line) {
+                idx_by_line.insert(line, i);
+            }
+        }
         let sess_dev: Vec<Option<(u32, u32)>> = sessions
             .iter()
             .map(|s| devnum(Path::new(&s.device)))
@@ -101,7 +111,11 @@ impl Collector for LinuxCollector {
             };
             // post[0]=state post[1]=ppid post[4]=tty_nr post[11]=utime
             // post[12]=stime post[19]=starttime post[21]=rss(pages)
-            let state = post.first().copied().map(|v| v as u8 as char).unwrap_or('?');
+            let state = post
+                .first()
+                .copied()
+                .map(|v| v as u8 as char)
+                .unwrap_or('?');
             let _ppid = get(&post, 1).unwrap_or(0) as u32;
             let tnr = get(&post, 4).unwrap_or(0);
             let utime = get(&post, 11).unwrap_or(0) as u64;
@@ -109,21 +123,30 @@ impl Collector for LinuxCollector {
             let start_ticks = get(&post, 19).unwrap_or(0) as f64;
             let start_secs = start_ticks / self.clk_tck;
 
+            let raw_command = read_cmdline(&base);
+            // Tailscale sshd children carry the remote person's identity;
+            // inspect them even when they have no controlling tty of their own.
+            if raw_command.contains("--remote-user=") {
+                if let Some((email, ip)) = super::tailscale::parse_ts_identity(&raw_command) {
+                    self.ts_identities.insert(ip, email);
+                }
+            }
+
             let (major, minor) = decode_tty(tnr);
-            if major == 0 {
-                continue; // no controlling terminal: not session activity.
+            // Direct fd paths are the primary match. Some processes have a
+            // pty on fd 0/1/2 even when tty_nr is zero after redirection.
+            let fd_tty = read_process_tty(&base, &idx_by_line);
+            if major == 0 && fd_tty.is_none() {
+                continue; // no controlling terminal or known tty fd.
             }
 
             let uid = read_uid(&base).unwrap_or(u32::MAX);
             let user = self.uid_name(uid);
-            let command = read_cmdline(&base);
-            // Tailscale sshd children carry the remote person's identity.
-            if command.contains("--remote-user=") {
-                if let Some((email, ip)) = super::tailscale::parse_ts_identity(&command) {
-                    self.ts_identities.insert(ip, email);
-                }
-            }
-            let command = if command.is_empty() { comm.clone() } else { command };
+            let command = if raw_command.is_empty() {
+                comm.clone()
+            } else {
+                raw_command
+            };
 
             let rss_kb = get(&post, 21).unwrap_or(0) as u64 * self.page_size / 1024;
             let elapsed = (uptime - start_secs).max(0.0);
@@ -134,7 +157,8 @@ impl Collector for LinuxCollector {
             let cpu_pct = dticks / self.clk_tck / dt.max(1e-6) * 100.0;
             cur_ticks.insert(pid, (utime, stime));
 
-            let session_idx = idx_by_dev.get(&(major, minor)).copied();
+            let session_idx =
+                resolve_session_index(fd_tty.as_deref(), (major, minor), &idx_by_line, &idx_by_dev);
 
             let mut p = Proc {
                 pid,
@@ -189,8 +213,7 @@ impl Collector for LinuxCollector {
                 let Some(i) = p.session_idx else { continue };
                 if !self.prev_tty.contains_key(&p.pid) {
                     if let Some(s) = sessions.get(i) {
-                        self.journal
-                            .spawn(&s.line, s.pid, now_unix, &p.cmdline);
+                        self.journal.spawn(&s.line, s.pid, now_unix, &p.cmdline);
                     }
                 }
             }
@@ -264,21 +287,10 @@ fn assign_kinds(sessions: &mut [Session], procs: &[Proc]) {
     }
 }
 
-/// glibc utmpx encoding of the `/proc/pid/stat` tty_nr field (a kernel device).
-fn decode_tty(tnr: i64) -> (u32, u32) {
-    let t = tnr as u32;
-    let major = (t >> 8) & 0xfff;
-    let minor = (t & 0xff) | ((t >> 12) & 0xfff00);
-    (major, minor)
-}
-
 fn devnum(path: &Path) -> Option<(u32, u32)> {
     let md = std::fs::metadata(path).ok()?;
     let r = md.rdev();
-    Some((
-        libc::major(r) as u32,
-        libc::minor(r) as u32,
-    ))
+    Some((libc::major(r) as u32, libc::minor(r) as u32))
 }
 
 fn read_dir_numeric(root: &Path) -> Vec<u32> {
@@ -400,7 +412,10 @@ impl LinuxCollector {
         let entries = super::shellhistory::read_shell_histories(&home);
         self.shell_cache.insert(
             user.to_string(),
-            (newest.unwrap_or(std::time::SystemTime::UNIX_EPOCH), entries.clone()),
+            (
+                newest.unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                entries.clone(),
+            ),
         );
         entries
     }

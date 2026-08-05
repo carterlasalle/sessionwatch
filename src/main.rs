@@ -53,8 +53,12 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             "--interval" | "-i" => {
-                let v = it.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "-i needs a value"))?;
-                interval = v.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad interval"))?;
+                let v = it.next().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "-i needs a value")
+                })?;
+                interval = v
+                    .parse()
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad interval"))?;
             }
             other => {
                 eprintln!("unknown argument: {other}\n\n{USAGE}");
@@ -66,14 +70,20 @@ fn main() -> io::Result<()> {
     let interval = Duration::from_secs_f64(interval.max(0.25));
 
     // The collector requires Linux; fail loudly before touching the terminal.
-    let collector = collect::new().map_err(|msg| io::Error::new(io::ErrorKind::Unsupported, msg))?;
+    let collector =
+        collect::new().map_err(|msg| io::Error::new(io::ErrorKind::Unsupported, msg))?;
 
     // Raw-mode / alternate-screen terminal setup, restored on panic too.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
     std::panic::set_hook(Box::new(|info| {
-        let _ = execute!(io::stdout(), Show, DisableMouseCapture, LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            Show,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = disable_raw_mode();
         eprintln!("sessionwatch panicked: {info}");
     }));
@@ -86,7 +96,12 @@ fn main() -> io::Result<()> {
     let result = app.run(&mut terminal);
 
     // Tear down regardless of how the loop ended.
-    let _ = crossterm::execute!(io::stdout(), Show, DisableMouseCapture, LeaveAlternateScreen);
+    let _ = crossterm::execute!(
+        io::stdout(),
+        Show,
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
     let _ = disable_raw_mode();
     let _ = terminal.show_cursor();
 
