@@ -202,7 +202,7 @@ for future commands; existing untimestamped lines cannot be backfilled exactly.
 ### Bash
 
 ```bash
-printf '\nexport HISTTIMEFORMAT="%Y-%m-%d %H:%M:%S "\n' >> ~/.bashrc
+printf '%s\n' 'export HISTTIMEFORMAT="%Y-%m-%d %H:%M:%S "' >> ~/.bashrc
 source ~/.bashrc
 ```
 
