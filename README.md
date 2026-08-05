@@ -194,6 +194,33 @@ Shell-history enrichment reads `~/.bash_history` / `~/.zsh_history` /
 only when sessionwatch has read access to their home (i.e. root). It's a
 box-owner's tool: those files stay unread for everyone else.
 
+## Timestamped shell history
+
+Exact command times are only available when the shell writes them. Enable this
+for future commands; existing untimestamped lines cannot be backfilled exactly.
+
+### Bash
+
+```bash
+printf '\nexport HISTTIMEFORMAT="%Y-%m-%d %H:%M:%S "\n' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Bash will then persist timestamp records alongside new history entries.
+
+### Zsh
+
+```zsh
+printf '\nsetopt EXTENDED_HISTORY\n' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Fish already writes `when:` timestamps in its history format.
+
+sessionwatch's own journal timestamps live process spawns independently, so
+this shell setup is only needed to enrich connections that ended before
+sessionwatch was watching them.
+
 ## License
 
 MIT

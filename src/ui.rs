@@ -408,7 +408,7 @@ fn draw_processes(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Min(12),
         ],
     )
-    .column_spacing(0)
+    .column_spacing(1)
     .header(header)
     .block(block)
     .row_highlight_style(Style::default().bg(SEL_BG));
