@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible problem in sessionwatch
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please redact usernames, hostnames, Tailscale identities, commands,
+        process arguments, shell history, and log contents.
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: Which release or commit are you running?
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Linux distribution, kernel, architecture, and install method.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the exact commands and key presses that reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

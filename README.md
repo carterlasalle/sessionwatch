@@ -221,6 +221,13 @@ sessionwatch's own journal timestamps live process spawns independently, so
 this shell setup is only needed to enrich connections that ended before
 sessionwatch was watching them.
 
+## Project docs
+
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [License](LICENSE)
+
 ## License
 
 MIT
