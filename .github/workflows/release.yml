@@ -22,7 +22,7 @@ jobs:
             asset: sessionwatch-aarch64-linux-musl
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
